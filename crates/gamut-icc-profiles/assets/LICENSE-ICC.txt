@@ -1,0 +1,90 @@
+sRGB2014.icc — sRGB v2 ICC profile
+==================================
+
+Source: International Color Consortium (ICC), https://www.color.org/
+File:   sRGB2014.icc
+Size:   3024 bytes
+SHA-256: 384b832de3412066743b52a75ee906b6fb9fb8d9e09e936fc2c43223815c6e0a
+
+ICC profile header (verified):
+  - Version: 2.0.0.0  (ICC v2)
+  - Device class: mntr (Monitor)
+  - Colour space: RGB
+  - PCS: XYZ
+  - Description: "IEC 61966-2-1 Default RGB Colour Space - sRGB"
+  - Internal copyright tag: "Copyright International Color Consortium, 2015"
+
+Why ICC v2 (not v4)
+-------------------
+
+PDF/A-1B (ISO 19005-1) restricts ICC profiles in OutputIntents to ICC
+v2 (specifically, the subset supported by PDF 1.4). PDF/A-2/3/4 accept
+v4. Shipping the v2 profile gives a single asset usable across every
+PDF/A flavour that mangwhap targets.
+
+Redistribution
+--------------
+
+The ICC publishes the sRGB profile family for unrestricted use,
+including embedding in software products and PDF documents:
+
+  https://www.color.org/srgbprofiles.xalter
+
+  "These ICC sRGB profiles can be downloaded by anyone for any purpose,
+   including embedding in PDFs, products, or other software [...]"
+
+The profile is embedded in the `mangwhap-remediate` binary at compile
+time via `include_bytes!` and emitted into a remediated PDF as the
+contents of an `/OutputIntent`'s `/DestOutputProfile` ICC stream by
+`apply_add_output_intent`.
+
+Updating
+--------
+
+If a newer ICC sRGB v2 release supersedes this file, replace the
+binary blob, update the SHA-256 above, and re-run the
+`mangwhap-remediate` test suite. No code changes are required — the
+profile is loaded as a static byte slice and the OutputIntent's
+`/N` (component count) is hard-coded to 3 for any RGB v2 profile.
+
+
+sGrey-v2-magic.icc — Gray v2 ICC monitor profile
+================================================
+
+Source: saucecontrol/Compact-ICC-Profiles, https://github.com/saucecontrol/Compact-ICC-Profiles
+File:   sGrey-v2-magic.icc
+Size:   616 bytes
+
+ICC profile header (verified):
+  - Version: 2.1 (Microsoft color profile / ICC v2)
+  - Device class: mntr (Monitor)
+  - Colour space: GRAY
+  - PCS: XYZ
+  - MD5: "sGry"
+
+Why ICC v2
+----------
+
+PDF/A-1 § 6.2.2-1 caps OutputIntent DestOutputProfile profiles at
+`version < 3.0` (ICC v2). Vending a v2 Gray profile gives a single
+asset usable across every PDF/A flavour that mangwhap targets for the
+DeviceGray-without-OutputIntent remediation slot (§ 6.2.3.3-3 and
+its PDF/A-2+ siblings).
+
+Redistribution
+--------------
+
+The `saucecontrol/Compact-ICC-Profiles` repository releases its
+profiles under the Creative Commons CC0 1.0 Universal Public Domain
+Dedication:
+
+  https://github.com/saucecontrol/Compact-ICC-Profiles/blob/master/LICENSE
+
+  "The person who associated a work with this deed has dedicated the
+   work to the public domain by waiving all of his or her rights to
+   the work worldwide under copyright law [...]"
+
+CC0-licensed assets are unrestricted; embedding the profile in a
+remediated PDF (the `apply_add_output_intent` dispatcher splices it
+into `/DestOutputProfile`) requires no attribution and imposes no
+downstream constraints on the host document.

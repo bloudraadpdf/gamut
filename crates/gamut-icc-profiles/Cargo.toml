@@ -1,0 +1,19 @@
+[package]
+name = "gamut-icc-profiles"
+description = "Licensed standard ICC profile assets with typed identities."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gamut-icc.workspace = true

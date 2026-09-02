@@ -15,28 +15,166 @@ use quick_xml::NsReader;
 use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::{LocalName, QName, ResolveResult};
 
+use crate::XmpSourceSpan;
 use crate::error::{Result, XmpError};
 use crate::model::{XmpArray, XmpItem, XmpMeta, XmpProperty, XmpValue};
-use crate::namespace::{RDF_NAMESPACE, XML_NAMESPACE, XMPMETA_NAMESPACE};
-use crate::packet::XmpPacket;
+use crate::namespace::{Namespace, RDF_NAMESPACE, XML_NAMESPACE, XMPMETA_NAMESPACE};
+use crate::packet::{DecodedXmpPacket, XmpPacket};
+
+/// Lexical form used by a top-level XMP property declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum XmpPropertyForm {
+    /// An XML attribute on `rdf:Description`.
+    Attribute,
+    /// A child element of `rdf:Description`.
+    Element,
+}
+
+/// Source location and lexical name of one top-level XMP property.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XmpPropertyLocation {
+    /// Expanded namespace URI.
+    pub namespace: String,
+    /// Local property name.
+    pub name: String,
+    /// Prefix used by this declaration, without the colon.
+    pub prefix: Option<String>,
+    /// Declaration form.
+    pub form: XmpPropertyForm,
+    /// Exact element span, or the containing start-tag span for attribute form.
+    pub span: XmpSourceSpan,
+}
+
+/// One namespace declaration encountered in the packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XmpNamespaceBinding {
+    /// Declared prefix, or `None` for the default namespace.
+    pub prefix: Option<String>,
+    /// Bound namespace URI.
+    pub namespace: String,
+    /// Span of the start tag carrying the declaration.
+    pub span: XmpSourceSpan,
+}
+
+/// Source and subject spelling of one top-level `rdf:Description`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XmpDescriptionLocation {
+    /// Full element span.
+    pub span: XmpSourceSpan,
+    /// Value of `rdf:about` or `rdf:ID`, when either is present.
+    pub subject: Option<String>,
+    /// Prefix used on the subject attribute.
+    pub subject_prefix: Option<String>,
+}
+
+/// An XMP graph together with the lexical facts needed by validation and editing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XmpDocument {
+    /// Namespace-neutral property graph.
+    pub meta: XmpMeta,
+    /// Top-level property declarations in document order.
+    pub properties: Vec<XmpPropertyLocation>,
+    /// Every namespaced XMP data node, including nested structure fields and attributes.
+    pub nodes: Vec<XmpPropertyLocation>,
+    /// Namespace bindings in document order.
+    pub namespaces: Vec<XmpNamespaceBinding>,
+    /// Top-level resource descriptions in document order.
+    pub descriptions: Vec<XmpDescriptionLocation>,
+    /// Prefix used on the `rdf:RDF` element.
+    pub rdf_prefix: Option<String>,
+    /// Whether `rdf:RDF` is wrapped in an `x:xmpmeta` element by namespace identity.
+    pub root_is_xmpmeta: bool,
+}
 
 impl XmpMeta {
     /// Parses an XMP packet into a property graph.
     ///
     /// Accepts a packet with or without the `<?xpacket?>` wrapper (so it works on a WebP `XMP `
     /// chunk, an AVIF `mime` item, a JPEG `APP1` payload, or a bare `rdf:RDF` / `x:xmpmeta` body),
-    /// tolerating a leading UTF-8 byte-order mark.
+    /// decoding UTF-8, UTF-16, or UTF-32 in either byte order.
     ///
     /// This is exactly [`XmpPacket::scan`] followed by [`XmpPacket::parse`]; scan first instead
     /// when the envelope matters (its writability and padding drive in-place editing).
     ///
     /// # Errors
     ///
-    /// Returns an [`XmpError`] if the bytes are not valid UTF-8 (or begin with a UTF-16/32
-    /// byte-order mark — only UTF-8 packets are supported), the XML is malformed, there is no
-    /// `rdf:RDF` element, or the RDF/XML uses a construct XMP does not permit.
+    /// Returns an [`XmpError`] if the packet encoding or XML is malformed, there is no `rdf:RDF`
+    /// element, the same expanded top-level property is declared twice, or the RDF/XML uses a
+    /// construct XMP does not permit.
     pub fn from_packet(bytes: &[u8]) -> Result<XmpMeta> {
-        XmpPacket::scan(bytes)?.parse()
+        Ok(XmpPacket::scan_with_source(bytes)?.parse()?.meta)
+    }
+
+    /// Parses the RDF/XML content of one property into an [`XmpValue`].
+    ///
+    /// `namespaces` supplies the prefixes that the fragment can use. The property itself is
+    /// identified by expanded name and need not appear in the fragment. This is intended for
+    /// typed edit boundaries that receive a standards-defined RDF value fragment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XmpError`] when the fragment is not one valid XMP property value or uses an
+    /// undeclared prefix.
+    pub fn value_from_fragment(
+        namespace: &str,
+        name: &str,
+        fragment: &str,
+        namespaces: &[Namespace],
+    ) -> Result<XmpValue> {
+        let mut packet = String::from("<rdf:RDF xmlns:rdf=\"");
+        push_attr_text(&mut packet, RDF_NAMESPACE);
+        packet.push_str("\" xmlns:target=\"");
+        push_attr_text(&mut packet, namespace);
+        packet.push('"');
+        for binding in namespaces {
+            if matches!(binding.prefix.as_str(), "rdf" | "xml" | "target") {
+                continue;
+            }
+            packet.push_str(" xmlns:");
+            packet.push_str(&binding.prefix);
+            packet.push_str("=\"");
+            push_attr_text(&mut packet, &binding.uri);
+            packet.push('"');
+        }
+        packet.push_str("><rdf:Description rdf:about=\"\"><target:");
+        packet.push_str(name);
+        packet.push('>');
+        packet.push_str(fragment);
+        packet.push_str("</target:");
+        packet.push_str(name);
+        packet.push_str("></rdf:Description></rdf:RDF>");
+        let meta = Self::from_packet(packet.as_bytes())?;
+        Ok(meta
+            .get(namespace, name)
+            .ok_or(XmpError::MissingRdf)?
+            .value
+            .clone())
+    }
+}
+
+fn push_attr_text(output: &mut String, value: &str) {
+    for character in value.chars() {
+        match character {
+            '&' => output.push_str("&amp;"),
+            '<' => output.push_str("&lt;"),
+            '"' => output.push_str("&quot;"),
+            other => output.push(other),
+        }
+    }
+}
+
+impl DecodedXmpPacket {
+    /// Parses the decoded packet into its property graph and lexical source layout.
+    ///
+    /// Every span indexes [`Self::decoded`], including for packets transcoded from UTF-16/32.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`XmpError`] if the XML or XMP data model is malformed or ambiguous.
+    pub fn parse(&self) -> Result<XmpDocument> {
+        let content = self.envelope.content;
+        parse_document(&self.decoded[content.start..content.end], content.start)
     }
 }
 
@@ -67,7 +205,7 @@ impl XmpPacket {
     /// Returns an [`XmpError`] if the body is malformed XML, has no `rdf:RDF` element, or uses an
     /// RDF/XML construct XMP does not permit.
     pub fn parse(&self) -> Result<XmpMeta> {
-        interpret(&build_tree(&self.body)?)
+        Ok(parse_document(&self.body, 0)?.meta)
     }
 }
 
@@ -77,12 +215,18 @@ impl XmpPacket {
 
 /// An XML element with namespace-resolved names, owned so phase 2 needs no `quick-xml` lifetimes.
 struct Element {
+    /// Exact element span in decoded UTF-8 source bytes.
+    span: XmpSourceSpan,
+    /// Prefix used by the element name, without the colon.
+    prefix: Option<String>,
     /// The element's namespace URI, or `None` if it is in no namespace.
     ns: Option<String>,
     /// The element's local name.
     local: String,
     /// Resolved attributes, excluding `xmlns` declarations.
     attrs: Vec<Attr>,
+    /// Namespace declarations carried by this element's start tag.
+    bindings: Vec<XmpNamespaceBinding>,
     /// Child nodes in document order.
     children: Vec<Node>,
 }
@@ -97,6 +241,8 @@ enum Node {
 
 /// A namespace-resolved attribute.
 struct Attr {
+    /// Prefix used by the attribute name, without the colon.
+    prefix: Option<String>,
     /// The attribute's namespace URI, or `None` for an unprefixed attribute.
     ns: Option<String>,
     /// The attribute's local name.
@@ -106,7 +252,7 @@ struct Attr {
 }
 
 /// Lexes `xml` into the top-level [`Element`] (`x:xmpmeta` or `rdf:RDF`).
-fn build_tree(xml: &str) -> Result<Element> {
+fn build_tree(xml: &str, base: usize) -> Result<Element> {
     let mut reader = NsReader::from_str(xml);
     // `<x/>` and `<x></x>` then look the same to phase 2; whitespace is preserved (default config)
     // because it is significant inside a simple value (Part 1 §7.5).
@@ -116,16 +262,23 @@ fn build_tree(xml: &str) -> Result<Element> {
     let mut root: Option<Element> = None;
 
     loop {
+        let event_start = base
+            + usize::try_from(reader.buffer_position())
+                .map_err(|_| XmpError::Xml("XML source position exceeds usize".into()))?;
         let event = reader.read_event().map_err(xml_error)?;
+        let event_end = base
+            + usize::try_from(reader.buffer_position())
+                .map_err(|_| XmpError::Xml("XML source position exceeds usize".into()))?;
         if matches!(event, Event::Eof) {
             break;
         }
         match event {
-            Event::Start(e) => stack.push(start_element(&reader, &e)?),
+            Event::Start(e) => stack.push(start_element(&reader, &e, event_start, event_end)?),
             Event::End(_) => {
-                let done = stack
+                let mut done = stack
                     .pop()
                     .ok_or_else(|| XmpError::Xml("unbalanced end tag".into()))?;
+                done.span.end = event_end;
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(Node::Element(done)),
                     None if root.is_some() => {
@@ -153,13 +306,25 @@ fn build_tree(xml: &str) -> Result<Element> {
 }
 
 /// Builds an owned [`Element`] from a start tag, resolving its name and attributes.
-fn start_element<R>(reader: &NsReader<R>, e: &BytesStart) -> Result<Element> {
+fn start_element<R>(
+    reader: &NsReader<R>,
+    e: &BytesStart,
+    start: usize,
+    end: usize,
+) -> Result<Element> {
     let (ns, local) = resolve_element(reader, e.name())?;
+    let prefix = lexical_prefix(e.name().as_ref());
     let mut attrs = Vec::new();
+    let mut bindings = Vec::new();
     for attr in e.attributes() {
         let attr = attr.map_err(|err| XmpError::Xml(err.to_string()))?;
         // `xmlns`/`xmlns:*` are namespace declarations, not data; the resolver already consumed them.
         if attr.key.0 == b"xmlns" || attr.key.0.starts_with(b"xmlns:") {
+            bindings.push(XmpNamespaceBinding {
+                prefix: attr.key.0.strip_prefix(b"xmlns:").map(decode),
+                namespace: decode(attr.value.as_ref()),
+                span: XmpSourceSpan { start, end },
+            });
             continue;
         }
         let (ans, alocal) = resolve_attribute(reader, attr.key)?;
@@ -170,17 +335,26 @@ fn start_element<R>(reader: &NsReader<R>, e: &BytesStart) -> Result<Element> {
             .map_err(|err| XmpError::Xml(err.to_string()))?
             .into_owned();
         attrs.push(Attr {
+            prefix: lexical_prefix(attr.key.as_ref()),
             ns: ans,
             local: alocal,
             value,
         });
     }
     Ok(Element {
+        span: XmpSourceSpan { start, end },
+        prefix,
         ns,
         local,
         attrs,
+        bindings,
         children: Vec::new(),
     })
+}
+
+fn lexical_prefix(name: &[u8]) -> Option<String> {
+    let colon = name.iter().position(|byte| *byte == b':')?;
+    Some(decode(&name[..colon]))
 }
 
 /// Resolves an element's qualified name to `(namespace URI, local name)`.
@@ -242,12 +416,28 @@ fn xml_error(err: quick_xml::Error) -> XmpError {
 // ---------------------------------------------------------------------------------------------------
 
 /// Walks the parsed tree into an [`XmpMeta`].
-fn interpret(root: &Element) -> Result<XmpMeta> {
+fn parse_document(xml: &str, base: usize) -> Result<XmpDocument> {
+    interpret(&build_tree(xml, base)?)
+}
+
+fn interpret(root: &Element) -> Result<XmpDocument> {
     let rdf = find_rdf(root)?;
     let mut meta = XmpMeta::new();
+    let mut seen = Vec::new();
+    let mut properties = Vec::new();
+    let mut descriptions = Vec::new();
     for desc in rdf.children.iter().filter_map(node_element) {
         if is(desc, RDF_NAMESPACE, "Description") {
-            parse_description(desc, &mut meta)?;
+            let subject = desc.attrs.iter().find(|attribute| {
+                attribute.ns.as_deref() == Some(RDF_NAMESPACE)
+                    && matches!(attribute.local.as_str(), "about" | "ID")
+            });
+            descriptions.push(XmpDescriptionLocation {
+                span: desc.span,
+                subject: subject.map(|attribute| attribute.value.clone()),
+                subject_prefix: subject.and_then(|attribute| attribute.prefix.clone()),
+            });
+            parse_description(desc, &mut meta, &mut seen, &mut properties)?;
         } else {
             // A top-level typed node is prohibited in XMP (Part 1 §7.9.2.5).
             return Err(XmpError::Prohibited(format!(
@@ -256,7 +446,55 @@ fn interpret(root: &Element) -> Result<XmpMeta> {
             )));
         }
     }
-    Ok(meta)
+    let mut namespaces = Vec::new();
+    collect_bindings(root, &mut namespaces);
+    let mut nodes = Vec::new();
+    collect_data_nodes(root, &mut nodes);
+    Ok(XmpDocument {
+        meta,
+        properties,
+        nodes,
+        namespaces,
+        descriptions,
+        rdf_prefix: rdf.prefix.clone(),
+        root_is_xmpmeta: is(root, XMPMETA_NAMESPACE, "xmpmeta"),
+    })
+}
+
+fn collect_data_nodes(element: &Element, output: &mut Vec<XmpPropertyLocation>) {
+    for attribute in &element.attrs {
+        if let Some(property) = data_attr_property(attribute) {
+            output.push(XmpPropertyLocation {
+                namespace: property.namespace,
+                name: property.name,
+                prefix: attribute.prefix.clone(),
+                form: XmpPropertyForm::Attribute,
+                span: element.span,
+            });
+        }
+    }
+    for child in element.children.iter().filter_map(node_element) {
+        if let Some(namespace) = &child.ns
+            && namespace != RDF_NAMESPACE
+            && namespace != XMPMETA_NAMESPACE
+        {
+            output.push(XmpPropertyLocation {
+                namespace: namespace.clone(),
+                name: child.local.clone(),
+                prefix: child.prefix.clone(),
+                form: XmpPropertyForm::Element,
+                span: child.span,
+            });
+        }
+        collect_data_nodes(child, output);
+    }
+}
+
+fn collect_bindings(element: &Element, output: &mut Vec<XmpNamespaceBinding>) {
+    output.extend(element.bindings.iter().cloned());
+    for child in element.children.iter().filter_map(node_element) {
+        collect_bindings(child, output);
+    }
 }
 
 /// Finds the `rdf:RDF` element, looking inside an optional `x:xmpmeta` wrapper (Part 1 §7.3.3).
@@ -277,16 +515,60 @@ fn find_rdf(root: &Element) -> Result<&Element> {
 }
 
 /// Reads one `rdf:Description`'s properties (both attribute and element forms) into `meta`.
-fn parse_description(desc: &Element, meta: &mut XmpMeta) -> Result<()> {
+fn parse_description(
+    desc: &Element,
+    meta: &mut XmpMeta,
+    seen: &mut Vec<((String, String), XmpSourceSpan)>,
+    locations: &mut Vec<XmpPropertyLocation>,
+) -> Result<()> {
     // Simple unqualified properties may be written as attributes on the Description (Part 1
     // §7.9.2.2); `rdf:about`/`rdf:ID` and `xml:lang` are not data and are skipped.
-    for prop in desc.attrs.iter().filter_map(data_attr_property) {
-        meta.set(prop);
+    for attr in &desc.attrs {
+        let Some(prop) = data_attr_property(attr) else {
+            continue;
+        };
+        let location = XmpPropertyLocation {
+            namespace: prop.namespace.clone(),
+            name: prop.name.clone(),
+            prefix: attr.prefix.clone(),
+            form: XmpPropertyForm::Attribute,
+            span: desc.span,
+        };
+        insert_unique(meta, seen, prop, desc.span)?;
+        locations.push(location);
     }
     for child in desc.children.iter().filter_map(node_element) {
         let property = parse_property(child)?;
-        meta.set(property);
+        let location = XmpPropertyLocation {
+            namespace: property.namespace.clone(),
+            name: property.name.clone(),
+            prefix: child.prefix.clone(),
+            form: XmpPropertyForm::Element,
+            span: child.span,
+        };
+        insert_unique(meta, seen, property, child.span)?;
+        locations.push(location);
     }
+    Ok(())
+}
+
+fn insert_unique(
+    meta: &mut XmpMeta,
+    seen: &mut Vec<((String, String), XmpSourceSpan)>,
+    property: XmpProperty,
+    span: XmpSourceSpan,
+) -> Result<()> {
+    let key = (property.namespace.clone(), property.name.clone());
+    if let Some((_, first)) = seen.iter().find(|(candidate, _)| candidate == &key) {
+        return Err(XmpError::DuplicateProperty {
+            namespace: key.0,
+            name: key.1,
+            first: *first,
+            duplicate: span,
+        });
+    }
+    seen.push((key, span));
+    meta.set(property);
     Ok(())
 }
 
@@ -735,6 +1017,105 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_element_properties_are_rejected_with_source_spans() {
+        let xml = rdf("<dc:format>first</dc:format><dc:format>second</dc:format>");
+        let err = XmpMeta::from_packet(xml.as_bytes()).unwrap_err();
+        let XmpError::DuplicateProperty {
+            namespace,
+            name,
+            first,
+            duplicate,
+        } = err
+        else {
+            panic!("expected duplicate-property diagnostic");
+        };
+        assert_eq!(namespace, DC);
+        assert_eq!(name, "format");
+        assert_eq!(&xml[first.start..first.end], "<dc:format>first</dc:format>");
+        assert_eq!(
+            &xml[duplicate.start..duplicate.end],
+            "<dc:format>second</dc:format>"
+        );
+    }
+
+    #[test]
+    fn duplicate_properties_across_descriptions_are_rejected() {
+        let xml = format!(
+            "<rdf:RDF xmlns:rdf=\"{RDF_NAMESPACE}\" xmlns:dc=\"{DC}\">\
+             <rdf:Description><dc:format>first</dc:format></rdf:Description>\
+             <rdf:Description><dc:format>second</dc:format></rdf:Description>\
+             </rdf:RDF>"
+        );
+        assert!(matches!(
+            XmpMeta::from_packet(xml.as_bytes()),
+            Err(XmpError::DuplicateProperty { .. })
+        ));
+    }
+
+    #[test]
+    fn attribute_and_element_forms_of_one_property_are_duplicates() {
+        let xml = format!(
+            "<rdf:RDF xmlns:rdf=\"{RDF_NAMESPACE}\" xmlns:xmp=\"{XMP}\">\
+             <rdf:Description xmp:Rating=\"3\"><xmp:Rating>4</xmp:Rating></rdf:Description>\
+             </rdf:RDF>"
+        );
+        assert!(matches!(
+            XmpMeta::from_packet(xml.as_bytes()),
+            Err(XmpError::DuplicateProperty { namespace, name, .. })
+                if namespace == XMP && name == "Rating"
+        ));
+    }
+
+    #[test]
+    fn equal_local_names_in_distinct_namespaces_are_not_duplicates() {
+        let meta = parse(&rdf("<dc:format>a</dc:format><foo:format>b</foo:format>"));
+        assert_eq!(meta.get_text(DC, "format"), Some("a"));
+        assert_eq!(meta.get_text(FOO, "format"), Some("b"));
+    }
+
+    #[test]
+    fn decoded_document_exposes_property_and_namespace_layout() {
+        let xml = format!(
+            "<?xpacket begin='' id='x'?>{}<?xpacket end='r'?>",
+            rdf("<dc:format>text/plain</dc:format>")
+        );
+        let decoded = XmpPacket::scan_with_source(xml.as_bytes()).unwrap();
+        let document = decoded.parse().unwrap();
+        assert_eq!(document.rdf_prefix.as_deref(), Some("rdf"));
+        let property = document
+            .properties
+            .iter()
+            .find(|property| property.namespace == DC && property.name == "format")
+            .unwrap();
+        assert_eq!(property.prefix.as_deref(), Some("dc"));
+        assert_eq!(property.form, XmpPropertyForm::Element);
+        assert_eq!(
+            &decoded.decoded[property.span.start..property.span.end],
+            "<dc:format>text/plain</dc:format>"
+        );
+        assert!(
+            document
+                .namespaces
+                .iter()
+                .any(|binding| binding.prefix.as_deref() == Some("dc") && binding.namespace == DC)
+        );
+    }
+
+    #[test]
+    fn attribute_property_layout_records_lexical_prefix_and_form() {
+        let xml = format!(
+            "<rdf:RDF xmlns:rdf=\"{RDF_NAMESPACE}\" xmlns:xmp=\"{XMP}\">\
+             <rdf:Description xmp:Rating=\"3\"/></rdf:RDF>"
+        );
+        let decoded = XmpPacket::scan_with_source(xml.as_bytes()).unwrap();
+        let document = decoded.parse().unwrap();
+        let property = &document.properties[0];
+        assert_eq!(property.prefix.as_deref(), Some("xmp"));
+        assert_eq!(property.form, XmpPropertyForm::Attribute);
+        assert!(decoded.decoded[property.span.start..property.span.end].contains("xmp:Rating"));
+    }
+
+    #[test]
     fn rejects_rdf_numbered_array_items() {
         let err = XmpMeta::from_packet(
             rdf("<dc:x><rdf:Bag><rdf:_1>a</rdf:_1></rdf:Bag></dc:x>").as_bytes(),
@@ -961,5 +1342,21 @@ mod tests {
             "only dc:format, no xmlns property"
         );
         assert_eq!(meta.get_text(DC, "format"), Some("text/plain"));
+    }
+
+    #[test]
+    fn parses_property_value_fragment_with_supplied_namespaces() {
+        let value = XmpMeta::value_from_fragment(
+            DC,
+            "title",
+            "<rdf:Alt><rdf:li xml:lang=\"x-default\">Title</rdf:li></rdf:Alt>",
+            &[],
+        )
+        .expect("fragment");
+        let XmpValue::Array(XmpArray::Alt(items)) = value else {
+            panic!("expected language alternative");
+        };
+        assert_eq!(items[0].lang(), Some("x-default"));
+        assert_eq!(items[0].text(), Some("Title"));
     }
 }

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Decode UTF-16 and UTF-32 XMP packets and expose encoding-aware packet, namespace, and property
+  source spans.
+- Add an encoding- and envelope-preserving `XmpEdit` transaction for typed property mutations.
+
+### Fixed
+
+- Reject duplicate top-level expanded property names with locations instead of replacing them.
+
 ## [1.0.0](https://github.com/justin13888/gamut/compare/gamut-xmp-v0.1.1...gamut-xmp-v1.0.0) - 2026-07-18
 
 ### Added

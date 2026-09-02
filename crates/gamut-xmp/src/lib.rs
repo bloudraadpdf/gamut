@@ -13,7 +13,8 @@
 //!
 //! # Quick start
 //!
-//! [`XmpMeta::from_packet`] reads a packet; [`XmpMeta::to_packet`] writes one. Accessors like
+//! [`XmpMeta::from_packet`] reads a packet; [`XmpMeta::to_packet`] writes one. [`XmpEdit`] changes
+//! an existing packet while preserving its encoding and envelope. Accessors like
 //! [`XmpMeta::get_text`] / [`XmpMeta::set_text`] and [`XmpMeta::get_lang_alt`] /
 //! [`XmpMeta::set_lang_alt`] cover the common cases; [`WellKnownNs`] supplies the standard schema
 //! URIs so you do not hand-write them.
@@ -46,25 +47,39 @@
 //!   accessors maintain the canonical invariants (unique names, unique `Alt` languages,
 //!   `x-default` first); direct field mutation can bypass them, and the infallible writer
 //!   serializes what the graph says without validating (see [`model`]).
-//! - **UTF-8.** Packets are read and written as UTF-8 (a leading byte-order mark is tolerated on
-//!   read but not emitted). Part 1 §7.1 also allows UTF-16/32, which are reported as unsupported.
+//! - **All XMP text encodings on read.** UTF-8, UTF-16, and UTF-32 are detected from a BOM or the
+//!   XML leading-byte pattern. New packets use UTF-8; [`XmpEdit`] retains an existing packet's
+//!   encoding and BOM choice.
 //! - **`quick-xml` is internal.** The XML lexer is an implementation detail and does not appear in
 //!   the public API (errors are surfaced via [`XmpError`]), so it can be changed without a breaking
 //!   change.
 //! - **Memory-safe on hostile input.** `#![forbid(unsafe_code)]` — XMP is XML from untrusted files.
 #![forbid(unsafe_code)]
 
+pub mod edit;
 pub mod error;
 pub mod model;
 pub mod namespace;
 pub mod packet;
+pub mod repair;
 pub mod writer;
 // The reader has no configuration — `XmpMeta::from_packet` is the entry point and auto-detects the
 // wrapper, encoding, and input form — so the module carries only that `impl` and stays private.
 mod reader;
 
+pub use edit::XmpEdit;
 pub use error::{Result, XmpError};
 pub use model::{XmpArray, XmpItem, XmpMeta, XmpProperty, XmpValue};
 pub use namespace::{Namespace, RDF_NAMESPACE, WellKnownNs, XML_NAMESPACE, XMPMETA_NAMESPACE};
-pub use packet::XmpPacket;
+pub use packet::{
+    DecodedXmpPacket, XmpEncoding, XmpEnvelope, XmpPacket, XmpSourceSpan, rdf_prefix_case_mismatch,
+    repair_rdf_prefix_case,
+};
+pub use reader::{
+    XmpDescriptionLocation, XmpDocument, XmpNamespaceBinding, XmpPropertyForm, XmpPropertyLocation,
+};
+pub use repair::{
+    CANONICAL_BEGIN, CANONICAL_PACKET_ID, canonicalise_xmp_packet, close_xmp_wrappers,
+    repair_xmp_serialisation,
+};
 pub use writer::XmpWriter;

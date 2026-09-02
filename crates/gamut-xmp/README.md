@@ -28,8 +28,8 @@ a C++ toolchain into every consumer build — and `xmp-writer`, which only write
 directions in pure Rust, plus a property the SDK does not promise: **byte-stable canonical
 output**. gamut-xmp reads the permissive RDF/XML input XMP allows (Part 1 §7.9 / Annex C) and
 emits one fixed canonical form, pinned byte-for-byte by golden tests, so the format crates embed
-reproducible, diffable packets. If you need Adobe-SDK parity on every legacy quirk, or non-UTF-8
-packets, reach for `xmp_toolkit` instead.
+reproducible, diffable packets. If you need Adobe-SDK parity on every legacy quirk, reach for
+`xmp_toolkit` instead.
 
 ## Usage
 
@@ -49,12 +49,12 @@ let parsed = XmpMeta::from_packet(&packet).unwrap();
 assert_eq!(parsed.get_lang_alt(dc, "title", "x-default"), Some("My Photo"));
 ```
 
-`XmpMeta::from_packet` accepts a packet with or without the `<?xpacket?>` wrapper (and tolerates a
-leading UTF-8 BOM). `XmpMeta::to_packet` / `to_rdf` emit the canonical RDF/XML; `XmpWriter` exposes
-the wrapper / writability / padding knobs plus `with_namespace` to register a preferred prefix for
-a custom schema. `WellKnownNs` supplies the standard schema URIs and prefixes so you do not
-hand-write them. For in-place editing, `XmpPacket::scan` exposes the envelope (writability,
-padding) and `XmpPacket::parse` the graph — `from_packet` is exactly that composition.
+`XmpMeta::from_packet` accepts a packet with or without the `<?xpacket?>` wrapper in UTF-8, UTF-16,
+or UTF-32. `XmpMeta::to_packet` / `to_rdf` emit canonical UTF-8 RDF/XML; `XmpWriter` exposes the
+wrapper / writability / padding knobs plus `with_namespace` to register a preferred prefix for a
+custom schema. `XmpEdit` provides a single set/remove/merge transaction for existing packets and
+retains their encoding, BOM choice, packet instructions, and padding. `WellKnownNs` supplies the
+standard schema URIs and prefixes so you do not hand-write them.
 
 ## Scope
 
@@ -64,9 +64,12 @@ padding) and `XmpPacket::parse` the graph — `from_packet` is exactly that comp
   top-level typed nodes, duplicate Alt languages) are rejected with typed errors. The writer emits
   one canonical form; control characters that XML normalization would corrupt leave as character
   references.
-- **UTF-8 only.** Part 1 §7.1 also permits UTF-16/32 packets; they are rejected with a typed
-  `XmpError::Encoding`. Every gamut container writes UTF-8, and adding UTF-16/32 *reading* later
-  is a non-breaking change.
+- **All Part 1 encodings on read.** UTF-8, UTF-16, and UTF-32 in either byte order are detected by
+  BOM or XML leading-byte pattern. New packets use UTF-8; editing retains the source encoding and
+  BOM choice.
+- **Duplicate expanded names are errors.** Two top-level properties with the same namespace URI
+  and local name are rejected with the source span of both declarations rather than silently
+  applying a last-value-wins rule.
 - **Default `xml:lang` on `rdf:Description` is not propagated** to the properties it scopes.
   Adobe XMPCore does not materialize it either (pinned in `tests/oracle.rs`); gamut keeps parity
   with the reference engine. Per-property and per-item `xml:lang` are fully supported.

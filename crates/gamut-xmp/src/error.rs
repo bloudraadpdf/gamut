@@ -12,8 +12,8 @@
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum XmpError {
-    /// The packet is not valid UTF-8, or declares an unsupported text encoding. gamut-xmp reads and
-    /// writes UTF-8; Part 1 §7.1 also permits UTF-16/32, which are not implemented.
+    /// The packet contains malformed UTF-8, UTF-16, or UTF-32, or has an unterminated packet
+    /// instruction.
     #[error("XMP encoding: {0}")]
     Encoding(&'static str),
 
@@ -44,6 +44,21 @@ pub enum XmpError {
     /// requires the language tags to be unique. The string is the duplicated tag.
     #[error("XMP: duplicate xml:lang '{0}' in an alternative array")]
     DuplicateLang(String),
+
+    /// Two top-level properties used the same expanded name. XMP's data model maps each
+    /// `(namespace, local-name)` pair to one value, so a duplicate is ambiguous rather than a
+    /// last-value-wins update. Locations are decoded UTF-8 byte spans.
+    #[error("XMP: duplicate property {{{namespace}}}{name} at {duplicate:?} (first at {first:?})")]
+    DuplicateProperty {
+        /// Property namespace URI.
+        namespace: String,
+        /// Property local name.
+        name: String,
+        /// Location of the first declaration.
+        first: crate::XmpSourceSpan,
+        /// Location of the duplicate declaration.
+        duplicate: crate::XmpSourceSpan,
+    },
 }
 
 /// A specialized [`Result`](core::result::Result) for the XMP read path.

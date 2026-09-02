@@ -15,8 +15,8 @@ placement, and array/struct nesting so output is stable, diffable, and round-tri
   kept an internal detail: no quick-xml type appears in the public API (parse failures surface as
   `XmpError`), so the backend can change without a breaking change. The serializer is hand-written to
   pin the canonical byte form.
-- **Encoding — UTF-8, no BOM.** Packets are read and written as UTF-8; a leading BOM is tolerated on
-  read but never emitted. Part 1 §7.1 also allows UTF-16/32, reported as `XmpError::Encoding`.
+- **Encoding.** Packets are read as UTF-8, UTF-16, or UTF-32 in either byte order. New packets use
+  UTF-8 without a BOM; edit transactions retain the source encoding and BOM choice.
 - **Conformance oracle — exiv2.** exiv2 bundles Adobe's XMPCore, so it backs both the "Adobe-SDK"
   and "exiv2" checks. The differential gate is `tests/oracle.rs`, against a vendored, statically
   linked exiv2 + expat (`tooling/exiv2-oracle`, built from the `third_party/exiv2` + `third_party/
@@ -44,8 +44,6 @@ deliberately:
   not propagated to the properties it scopes. Adobe XMPCore does not materialize it either —
   parity is pinned by `tests/oracle.rs::default_xml_lang_on_description_matches_reference`.
   Per-property and per-item `xml:lang` are fully supported.
-- **UTF-16/32 packets (Part 1 §7.1):** rejected with a typed `XmpError::Encoding` (see the
-  encoding decision above). Read support would be purely additive later.
 - **`rdf:ID` / `rdf:nodeID` / `xml:base`, and `rdf:about` values (Part 1 §7.9):** ignored on read
   — RDF reification/base machinery XMP does not use; pinned by reader tests.
 - **xpacket `begin` attribute:** written empty (`begin=""`), one of the two forms §7.3.2 allows;

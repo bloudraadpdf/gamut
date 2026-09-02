@@ -18,7 +18,7 @@ use quick_xml::name::{LocalName, QName, ResolveResult};
 use crate::XmpSourceSpan;
 use crate::error::{Result, XmpError};
 use crate::model::{XmpArray, XmpItem, XmpMeta, XmpProperty, XmpValue};
-use crate::namespace::{Namespace, RDF_NAMESPACE, XML_NAMESPACE, XMPMETA_NAMESPACE};
+use crate::namespace::{RDF_NAMESPACE, XML_NAMESPACE, XMPMETA_NAMESPACE};
 use crate::packet::{DecodedXmpPacket, XmpPacket};
 
 /// Lexical form used by a top-level XMP property declaration.
@@ -104,63 +104,6 @@ impl XmpMeta {
     /// construct XMP does not permit.
     pub fn from_packet(bytes: &[u8]) -> Result<XmpMeta> {
         Ok(XmpPacket::scan_with_source(bytes)?.parse()?.meta)
-    }
-
-    /// Parses the RDF/XML content of one property into an [`XmpValue`].
-    ///
-    /// `namespaces` supplies the prefixes that the fragment can use. The property itself is
-    /// identified by expanded name and need not appear in the fragment. This is intended for
-    /// typed edit boundaries that receive a standards-defined RDF value fragment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`XmpError`] when the fragment is not one valid XMP property value or uses an
-    /// undeclared prefix.
-    pub fn value_from_fragment(
-        namespace: &str,
-        name: &str,
-        fragment: &str,
-        namespaces: &[Namespace],
-    ) -> Result<XmpValue> {
-        let mut packet = String::from("<rdf:RDF xmlns:rdf=\"");
-        push_attr_text(&mut packet, RDF_NAMESPACE);
-        packet.push_str("\" xmlns:target=\"");
-        push_attr_text(&mut packet, namespace);
-        packet.push('"');
-        for binding in namespaces {
-            if matches!(binding.prefix.as_str(), "rdf" | "xml" | "target") {
-                continue;
-            }
-            packet.push_str(" xmlns:");
-            packet.push_str(&binding.prefix);
-            packet.push_str("=\"");
-            push_attr_text(&mut packet, &binding.uri);
-            packet.push('"');
-        }
-        packet.push_str("><rdf:Description rdf:about=\"\"><target:");
-        packet.push_str(name);
-        packet.push('>');
-        packet.push_str(fragment);
-        packet.push_str("</target:");
-        packet.push_str(name);
-        packet.push_str("></rdf:Description></rdf:RDF>");
-        let meta = Self::from_packet(packet.as_bytes())?;
-        Ok(meta
-            .get(namespace, name)
-            .ok_or(XmpError::MissingRdf)?
-            .value
-            .clone())
-    }
-}
-
-fn push_attr_text(output: &mut String, value: &str) {
-    for character in value.chars() {
-        match character {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '"' => output.push_str("&quot;"),
-            other => output.push(other),
-        }
     }
 }
 
@@ -1342,21 +1285,5 @@ mod tests {
             "only dc:format, no xmlns property"
         );
         assert_eq!(meta.get_text(DC, "format"), Some("text/plain"));
-    }
-
-    #[test]
-    fn parses_property_value_fragment_with_supplied_namespaces() {
-        let value = XmpMeta::value_from_fragment(
-            DC,
-            "title",
-            "<rdf:Alt><rdf:li xml:lang=\"x-default\">Title</rdf:li></rdf:Alt>",
-            &[],
-        )
-        .expect("fragment");
-        let XmpValue::Array(XmpArray::Alt(items)) = value else {
-            panic!("expected language alternative");
-        };
-        assert_eq!(items[0].lang(), Some("x-default"));
-        assert_eq!(items[0].text(), Some("Title"));
     }
 }

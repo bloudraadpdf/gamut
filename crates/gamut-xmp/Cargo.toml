@@ -15,11 +15,18 @@ categories.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+schema = ["dep:schemars"]
+serde = ["dep:serde"]
+
 [dependencies]
 gamut-core.workspace = true
 # RDF/XML lexing for the reader. An internal detail: no quick-xml type appears in this crate's
 # public API (see `XmpError`), so it does not constrain the crate's own SemVer.
 quick-xml.workspace = true
+schemars = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]

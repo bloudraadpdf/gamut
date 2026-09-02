@@ -30,6 +30,8 @@ use crate::namespace::XML_NAMESPACE;
 /// structure and ordering are carried in the [`XmpValue`] tree, not here. Property order is
 /// preserved (it is the document order on read, and the order the serializer emits).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct XmpMeta {
     /// The top-level properties, each qualified by its namespace.
     pub properties: Vec<XmpProperty>,
@@ -37,6 +39,8 @@ pub struct XmpMeta {
 
 /// One XMP property: a namespaced name, its value, and any qualifiers.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct XmpProperty {
     /// The XML namespace URI the property name lives in (e.g. the Dublin Core URI for `dc:title`).
     pub namespace: String,
@@ -51,6 +55,8 @@ pub struct XmpProperty {
 
 /// An XMP value: a simple literal, a URI, a nested structure, or an array (Adobe XMP Part 1 §6.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum XmpValue {
     /// A simple literal value (text; typed values like dates/integers are text in the model,
     /// Part 1 §8.2).
@@ -76,6 +82,8 @@ impl Default for XmpValue {
 /// The three RDF array kinds XMP uses (Adobe XMP Part 1 §6.3.4). Items are 1-based and should share
 /// a value type.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum XmpArray {
     /// `rdf:Bag` — an unordered array.
     Bag(Vec<XmpItem>),
@@ -115,6 +123,8 @@ impl XmpArray {
 /// An `rdf:li` may carry qualifiers — most importantly the `xml:lang` of a language alternative
 /// (Part 1 §7.7, §8.2.2.4) — so array items are richer than a bare [`XmpValue`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct XmpItem {
     /// The item's value.
     pub value: XmpValue,

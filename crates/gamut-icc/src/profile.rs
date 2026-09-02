@@ -172,4 +172,43 @@ mod tests {
         assert!(IccProfile::parse(&b).is_ok()); // lenient allows odd offsets
         assert!(IccProfile::parse_with(&b, true).is_err()); // strict requires offsets past the table
     }
+
+    #[test]
+    fn typed_identity_projects_header_and_digests() {
+        let mut bytes = header();
+        bytes.extend_from_slice(&0u32.to_be_bytes());
+        let encoded_len = bytes.len() as u32;
+        bytes[0..4].copy_from_slice(&encoded_len.to_be_bytes());
+        bytes[84..100].fill(0x11);
+
+        let identity = crate::IccProfileIdentity::from_bytes(&bytes).unwrap();
+
+        assert_eq!(identity.canonical_id, crate::ProfileId([0x11; 16]));
+        assert_eq!(identity.checksum, crate::ProfileId::checksum(&bytes));
+        assert_eq!(identity.device_class, crate::DeviceClass::Display);
+        assert_eq!(identity.data_color_space, crate::ColorSpace::Rgb);
+        assert_eq!(identity.component_count(), 3);
+        assert_eq!(
+            identity.device_class_signature(),
+            crate::Signature(*b"mntr")
+        );
+        assert_eq!(identity.color_space_signature(), crate::Signature(*b"RGB "));
+    }
+
+    #[test]
+    fn canonical_identity_ignores_mutable_header_fields_when_id_is_unset() {
+        let mut first = header();
+        first.extend_from_slice(&0u32.to_be_bytes());
+        let encoded_len = first.len() as u32;
+        first[0..4].copy_from_slice(&encoded_len.to_be_bytes());
+        let mut second = first.clone();
+        second[44..48].copy_from_slice(&1u32.to_be_bytes());
+        second[64..68].copy_from_slice(&1u32.to_be_bytes());
+
+        let first = crate::IccProfileIdentity::from_bytes(&first).unwrap();
+        let second = crate::IccProfileIdentity::from_bytes(&second).unwrap();
+
+        assert_eq!(first.canonical_id, second.canonical_id);
+        assert_ne!(first.checksum, second.checksum);
+    }
 }

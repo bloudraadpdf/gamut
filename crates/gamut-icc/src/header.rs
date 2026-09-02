@@ -501,6 +501,12 @@ impl ProfileId {
         }
         ProfileId(Md5::digest(&buf).into())
     }
+
+    /// Computes the MD5 checksum of the encoded profile without canonicalising header fields.
+    #[must_use]
+    pub fn checksum(profile_bytes: &[u8]) -> ProfileId {
+        ProfileId(Md5::digest(profile_bytes).into())
+    }
 }
 
 impl core::fmt::Display for ProfileId {

@@ -70,6 +70,7 @@ mod data;
 mod dict;
 mod error;
 mod header;
+mod identity;
 mod lut;
 mod measurement;
 mod mluc;
@@ -92,6 +93,7 @@ pub use error::{IccError, Result};
 pub use header::{
     ColorSpace, DeviceClass, ProfileHeader, ProfileId, ProfileVersion, RenderingIntent,
 };
+pub use identity::IccProfileIdentity;
 pub use lut::{Clut, ClutPrecision, Lut8, Lut16, LutAToB, LutBToA, Matrix3x3, Matrix3x4};
 pub use measurement::{Chromaticity, Measurement, ViewingConditions};
 pub use mluc::{Mluc, MlucRecord, TextDescription};

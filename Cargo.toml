@@ -65,7 +65,7 @@ schemars = "1.2"
 geocoordinates = { version = "0.14", default-features = false }
 # MD5 for the ICC profile ID (ICC.1:2022 §7.2.18) — a content fingerprint mandated by the format,
 # not a security primitive. RustCrypto, pure-Rust, no_std-compatible.
-md-5 = { version = "0.10", default-features = false }
+md-5 = { version = "0.11", default-features = false }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt"] }
 bitflags = "2.6"
@@ -74,7 +74,7 @@ clap = { version = "4.5", features = ["derive"] }
 # error type included) exposes no quick-xml types, so this stays an implementation detail that can
 # be bumped without a breaking change. Default features only (UTF-8; the namespace-resolving
 # `NsReader` is in core).
-quick-xml = "0.40"
+quick-xml = "0.41"
 wasm-bindgen = "0.2"
 # Decode-only: gamut-cli reads PNG/JPEG/PPM inputs; all encoding stays in gamut crates.
 # `default-features = false` drops image's own avif/webp decoders and rayon.

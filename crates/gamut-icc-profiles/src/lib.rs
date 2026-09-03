@@ -27,6 +27,32 @@ impl StandardProfile {
         Self::IsoCoatedV2Eci,
     ];
 
+    /// Resolve a conventional profile name to a catalogue entry.
+    ///
+    /// The accepted aliases are the names commonly stored in PDF output
+    /// intents and colour-management configuration. Matching is ASCII
+    /// case-insensitive.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        if name.eq_ignore_ascii_case("sRGB IEC61966-2.1") || name.eq_ignore_ascii_case("sRGB") {
+            Some(Self::SrgbV2)
+        } else if name.eq_ignore_ascii_case("sGrey-v2-magic") || name.eq_ignore_ascii_case("sGrey")
+        {
+            Some(Self::SgreyV2)
+        } else if name.eq_ignore_ascii_case("CGATS21_CRPC6")
+            || name.eq_ignore_ascii_case("CGATS21 CRPC6")
+        {
+            Some(Self::Cgats21Crpc6)
+        } else if name.eq_ignore_ascii_case("ISOcoated_v2_eci")
+            || name.eq_ignore_ascii_case("ISO Coated v2 ECI")
+            || name.eq_ignore_ascii_case("Coated FOGRA39 ICC v2")
+        {
+            Some(Self::IsoCoatedV2Eci)
+        } else {
+            None
+        }
+    }
+
     /// Stable canonical profile name.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -121,5 +147,22 @@ mod tests {
         for (profile, checksum) in expected {
             assert_eq!(ProfileId::checksum(profile.bytes()).to_string(), checksum);
         }
+    }
+
+    #[test]
+    fn conventional_names_resolve_to_typed_profiles() {
+        let cases = [
+            ("sRGB IEC61966-2.1", StandardProfile::SrgbV2),
+            ("SRGB", StandardProfile::SrgbV2),
+            ("sGrey", StandardProfile::SgreyV2),
+            ("CGATS21 CRPC6", StandardProfile::Cgats21Crpc6),
+            ("ISO Coated v2 ECI", StandardProfile::IsoCoatedV2Eci),
+            ("Coated FOGRA39 ICC v2", StandardProfile::IsoCoatedV2Eci),
+        ];
+
+        for (name, expected) in cases {
+            assert_eq!(StandardProfile::from_name(name), Some(expected));
+        }
+        assert_eq!(StandardProfile::from_name("unknown profile"), None);
     }
 }

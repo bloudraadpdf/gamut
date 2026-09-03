@@ -19,6 +19,8 @@ pub struct XmpEdit {
     original_meta: XmpMeta,
     meta: XmpMeta,
     namespaces: Vec<Namespace>,
+    source_nodes: Vec<crate::reader::XmpPropertyLocation>,
+    force_rewrite: bool,
 }
 
 impl XmpEdit {
@@ -41,6 +43,7 @@ impl XmpEdit {
                     .map(|prefix| Namespace::new(&binding.namespace, prefix))
             })
             .collect();
+        let source_nodes = document.nodes;
         let meta = document.meta;
         Ok(Self {
             original: bytes.to_vec(),
@@ -48,6 +51,8 @@ impl XmpEdit {
             original_meta: meta.clone(),
             meta,
             namespaces,
+            source_nodes,
+            force_rewrite: false,
         })
     }
 
@@ -108,6 +113,23 @@ impl XmpEdit {
         self.namespaces.push(namespace.into());
     }
 
+    /// Selects the prefix used to serialise every property in a namespace.
+    ///
+    /// Unlike [`Self::register_namespace`], this is an explicit lexical edit:
+    /// when a source node uses another prefix, [`Self::finish`] re-emits the
+    /// packet even if its expanded-name graph is unchanged. Returns whether
+    /// the source packet contained a node requiring that rewrite.
+    pub fn rewrite_namespace_prefix(&mut self, namespace: impl Into<Namespace>) -> bool {
+        let namespace = namespace.into();
+        let changed = self.source_nodes.iter().any(|node| {
+            node.namespace == namespace.uri
+                && node.prefix.as_deref() != Some(namespace.prefix.as_str())
+        });
+        self.namespaces.push(namespace);
+        self.force_rewrite |= changed;
+        changed
+    }
+
     /// Completes the transaction.
     ///
     /// An unchanged transaction is byte-identical to its input. A changed transaction preserves
@@ -115,7 +137,7 @@ impl XmpEdit {
     /// the RDF/XML content region with deterministic canonical serialization.
     #[must_use]
     pub fn finish(self) -> Vec<u8> {
-        if self.meta == self.original_meta {
+        if !self.force_rewrite && self.meta == self.original_meta {
             return self.original;
         }
 
@@ -292,6 +314,27 @@ mod tests {
         let output = String::from_utf8(edit.finish()).unwrap();
         assert!(output.contains("xmlns:invoice=\"urn:example:invoice\""));
         assert!(output.contains("<invoice:Kind>credit-note</invoice:Kind>"));
+    }
+
+    #[test]
+    fn namespace_prefix_rewrite_is_an_explicit_lexical_edit() {
+        let packet = concat!(
+            "<rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#' ",
+            "xmlns:notDc='http://purl.org/dc/elements/1.1/'>",
+            "<rdf:Description rdf:about=''><notDc:title>Title</notDc:title></rdf:Description>",
+            "</rdf:RDF>",
+        );
+        let before = XmpMeta::from_packet(packet.as_bytes()).unwrap();
+        let mut edit = XmpEdit::from_packet(packet.as_bytes()).unwrap();
+
+        assert!(edit.rewrite_namespace_prefix(WellKnownNs::DublinCore));
+        let output = edit.finish();
+
+        assert_ne!(output, packet.as_bytes());
+        assert_eq!(XmpMeta::from_packet(&output).unwrap(), before);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("<dc:title>Title</dc:title>"));
+        assert!(!output.contains("notDc:"));
     }
 
     #[test]

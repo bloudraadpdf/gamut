@@ -29,6 +29,11 @@ serialization as an equivalent profile.
 
 ## Modelled element types
 
+Header inspection uses `ProfileHeaderObservation` (ICC.1:2022 §7.2, Table 17).
+It retains all declared fields, including unknown signatures and reserved version
+bytes, and rejects truncated headers. Validated header parsing consumes this same
+reader and still checks the registry fields and `acsp` signature.
+
 **Every ICC.1:2022 §10 element type is decoded semantically:** `XYZType`, `curveType`,
 `parametricCurveType` (function types 0–4), `textType`, `multiLocalizedUnicodeType`,
 `textDescriptionType` (v2), `dateTimeType`, `signatureType`, `s15Fixed16ArrayType`, `lut8Type`,

@@ -48,6 +48,12 @@ always re-serializes).
 device class, colour spaces, version, and component count without duplicating ICC header offsets
 in callers.
 
+`ProfileHeaderObservation::parse` reads all 128 header bytes without rejecting
+unknown registry signatures, invalid magic or reserved bytes. Use it for
+diagnostics and conformance evidence. `ProfileHeader::try_from` applies the same
+registry and magic checks as `ProfileHeader::parse`; observation alone does not
+establish a valid profile or tag table.
+
 **Out of scope:** applying a profile's transform — that is [`gamut-cmm`](../gamut-cmm), the
 workspace CMM (epic #323), for which the `to_f64`/`eval` accessors are the integration seam — and
 **iccMAX** (`ICC.2`), a separate next-generation format (see

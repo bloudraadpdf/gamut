@@ -103,56 +103,7 @@ impl ProfileHeader {
     /// is missing, or a closed-registry field (device class, colour space, rendering intent) holds
     /// an unrecognized value.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 128 {
-            return Err(IccError::Malformed(
-                "icc: profile shorter than 128-byte header",
-            ));
-        }
-        let mut r = ByteReader::new(bytes);
-        let size = r.u32()?;
-        let preferred_cmm = r.signature()?;
-        let major = r.u8()?;
-        let minor_bugfix = r.u8()?;
-        r.skip(2)?; // the two reserved version bytes
-        let version = ProfileVersion::from_bytes(major, minor_bugfix);
-        let device_class = DeviceClass::try_from(r.signature()?)?;
-        let data_color_space = ColorSpace::try_from(r.signature()?)?;
-        let pcs = ColorSpace::try_from(r.signature()?)?;
-        let created = r.date_time()?;
-        if r.signature()? != Signature(*b"acsp") {
-            return Err(IccError::Malformed("icc: missing 'acsp' profile signature"));
-        }
-        let platform = r.signature()?;
-        let flags = r.u32()?;
-        let manufacturer = r.signature()?;
-        let model = r.signature()?;
-        let attributes = r.u64()?;
-        let rendering_intent = RenderingIntent::try_from(r.u32()?)?;
-        let pcs_illuminant = r.xyz_number()?;
-        let creator = r.signature()?;
-        let mut profile_id = [0u8; 16];
-        profile_id.copy_from_slice(r.bytes(16)?);
-        let mut reserved = [0u8; 28];
-        reserved.copy_from_slice(r.bytes(28)?);
-        Ok(Self {
-            size,
-            preferred_cmm,
-            version,
-            device_class,
-            data_color_space,
-            pcs,
-            created,
-            platform,
-            flags,
-            manufacturer,
-            model,
-            attributes,
-            rendering_intent,
-            pcs_illuminant,
-            creator,
-            profile_id: ProfileId(profile_id),
-            reserved,
-        })
+        ProfileHeaderObservation::parse(bytes)?.try_into()
     }
 
     /// Whether the profile-flags field marks this profile as embedded in a file
@@ -220,6 +171,142 @@ impl ProfileHeader {
         out.extend_from_slice(&self.creator.0);
         out.extend_from_slice(&self.profile_id.0);
         out.extend_from_slice(&self.reserved);
+    }
+}
+
+/// Declared ICC.1 header fields, without registry or conformance admission.
+///
+/// Unlike [`ProfileHeader`], this view retains unknown signatures, rendering
+/// intents and reserved bytes. A successful read proves only that all 128
+/// header bytes are present; it does not prove a valid profile or tag table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileHeaderObservation {
+    /// Declared profile size in bytes.
+    pub size: u32,
+    /// Preferred CMM signature.
+    pub preferred_cmm: Signature,
+    /// Declared profile version.
+    pub version: ProfileVersion,
+    /// Reserved version bytes at offsets 10 and 11.
+    pub version_reserved: [u8; 2],
+    /// Declared device-class signature.
+    pub device_class: Signature,
+    /// Declared device colour-space signature.
+    pub data_color_space: Signature,
+    /// Declared connection-space signature.
+    pub pcs: Signature,
+    /// Declared creation date and time.
+    pub created: DateTime,
+    /// Profile file signature, normally `acsp`.
+    pub profile_signature: Signature,
+    /// Primary platform signature.
+    pub platform: Signature,
+    /// Raw profile flags.
+    pub flags: u32,
+    /// Device manufacturer signature.
+    pub manufacturer: Signature,
+    /// Device model signature.
+    pub model: Signature,
+    /// Raw device attributes.
+    pub attributes: u64,
+    /// Declared rendering-intent code.
+    pub rendering_intent: u32,
+    /// Declared PCS illuminant.
+    pub pcs_illuminant: XyzNumber,
+    /// Profile creator signature.
+    pub creator: Signature,
+    /// Declared profile identifier.
+    pub profile_id: ProfileId,
+    /// Reserved bytes at offsets 100 through 127.
+    pub reserved: [u8; 28],
+}
+
+impl ProfileHeaderObservation {
+    /// Read all header fields according to ICC.1:2022 §7.2, Table 17.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IccError::Malformed`] when fewer than 128 bytes are available.
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 128 {
+            return Err(IccError::Malformed(
+                "icc: profile shorter than 128-byte header",
+            ));
+        }
+        let mut r = ByteReader::new(bytes);
+        let size = r.u32()?;
+        let preferred_cmm = r.signature()?;
+        let major = r.u8()?;
+        let minor_bugfix = r.u8()?;
+        let version_reserved = [r.u8()?, r.u8()?];
+        let version = ProfileVersion::from_bytes(major, minor_bugfix);
+        let device_class = r.signature()?;
+        let data_color_space = r.signature()?;
+        let pcs = r.signature()?;
+        let created = r.date_time()?;
+        let profile_signature = r.signature()?;
+        let platform = r.signature()?;
+        let flags = r.u32()?;
+        let manufacturer = r.signature()?;
+        let model = r.signature()?;
+        let attributes = r.u64()?;
+        let rendering_intent = r.u32()?;
+        let pcs_illuminant = r.xyz_number()?;
+        let creator = r.signature()?;
+        let mut profile_id = [0u8; 16];
+        profile_id.copy_from_slice(r.bytes(16)?);
+        let mut reserved = [0u8; 28];
+        reserved.copy_from_slice(r.bytes(28)?);
+        Ok(Self {
+            size,
+            preferred_cmm,
+            version,
+            version_reserved,
+            device_class,
+            data_color_space,
+            pcs,
+            created,
+            profile_signature,
+            platform,
+            flags,
+            manufacturer,
+            model,
+            attributes,
+            rendering_intent,
+            pcs_illuminant,
+            creator,
+            profile_id: ProfileId(profile_id),
+            reserved,
+        })
+    }
+}
+
+impl TryFrom<ProfileHeaderObservation> for ProfileHeader {
+    type Error = IccError;
+
+    fn try_from(observed: ProfileHeaderObservation) -> Result<Self> {
+        if observed.profile_signature != Signature(*b"acsp") {
+            return Err(IccError::Malformed("icc: missing 'acsp' profile signature"));
+        }
+        Ok(Self {
+            size: observed.size,
+            preferred_cmm: observed.preferred_cmm,
+            version: observed.version,
+            device_class: observed.device_class.try_into()?,
+            data_color_space: observed.data_color_space.try_into()?,
+            pcs: observed.pcs.try_into()?,
+            created: observed.created,
+            platform: observed.platform,
+            flags: observed.flags,
+            manufacturer: observed.manufacturer,
+            model: observed.model,
+            attributes: observed.attributes,
+            rendering_intent: observed.rendering_intent.try_into()?,
+            pcs_illuminant: observed.pcs_illuminant,
+            creator: observed.creator,
+            profile_id: observed.profile_id,
+            reserved: observed.reserved,
+        })
     }
 }
 
@@ -552,6 +639,78 @@ mod tests {
         b.extend_from_slice(&[0u8; 28]); // 100: reserved
         assert_eq!(b.len(), 128);
         b
+    }
+
+    #[test]
+    fn observes_unknown_device_class_without_admitting_it() {
+        let mut bytes = sample_header();
+        bytes[12..16].copy_from_slice(b"????");
+        let observed = ProfileHeaderObservation::parse(&bytes).unwrap();
+        assert_eq!(observed.device_class, Signature(*b"????"));
+        assert_eq!(observed.data_color_space, Signature(*b"RGB "));
+        assert!(ProfileHeader::try_from(observed).is_err());
+    }
+
+    #[test]
+    fn observes_unknown_color_spaces_without_admitting_them() {
+        for offset in [16, 20] {
+            let mut bytes = sample_header();
+            bytes[offset..offset + 4].copy_from_slice(&[0xff, 0, 1, 2]);
+            let observed = ProfileHeaderObservation::parse(&bytes).unwrap();
+            let signature = if offset == 16 {
+                observed.data_color_space
+            } else {
+                observed.pcs
+            };
+            assert_eq!(signature, Signature([0xff, 0, 1, 2]));
+            assert!(ProfileHeader::try_from(observed).is_err());
+        }
+    }
+
+    #[test]
+    fn observes_unknown_intent_without_admitting_it() {
+        let mut bytes = sample_header();
+        bytes[64..68].copy_from_slice(&u32::MAX.to_be_bytes());
+        let observed = ProfileHeaderObservation::parse(&bytes).unwrap();
+        assert_eq!(observed.rendering_intent, u32::MAX);
+        assert!(ProfileHeader::try_from(observed).is_err());
+    }
+
+    #[test]
+    fn observes_invalid_magic_without_admitting_it() {
+        let mut bytes = sample_header();
+        bytes[36..40].copy_from_slice(b"nope");
+        let observed = ProfileHeaderObservation::parse(&bytes).unwrap();
+        assert_eq!(observed.profile_signature, Signature(*b"nope"));
+        assert!(ProfileHeader::try_from(observed).is_err());
+    }
+
+    #[test]
+    fn observation_preserves_reserved_version_bytes() {
+        let mut bytes = sample_header();
+        bytes[10..12].copy_from_slice(&[0x12, 0x34]);
+        let observed = ProfileHeaderObservation::parse(&bytes).unwrap();
+        assert_eq!(observed.version_reserved, [0x12, 0x34]);
+        assert_eq!(
+            observed.version,
+            ProfileVersion {
+                major: 4,
+                minor: 3,
+                bugfix: 0
+            }
+        );
+    }
+
+    #[test]
+    fn observation_refuses_every_truncated_header() {
+        let bytes = sample_header();
+        for end in 0..128 {
+            assert!(
+                ProfileHeaderObservation::parse(&bytes[..end]).is_err(),
+                "{end}"
+            );
+        }
+        assert!(ProfileHeaderObservation::parse(&bytes).is_ok());
     }
 
     #[test]

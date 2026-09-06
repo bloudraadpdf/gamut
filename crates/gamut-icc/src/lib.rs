@@ -91,7 +91,8 @@ pub use data::DataElement;
 pub use dict::{Dict, DictEntry};
 pub use error::{IccError, Result};
 pub use header::{
-    ColorSpace, DeviceClass, ProfileHeader, ProfileId, ProfileVersion, RenderingIntent,
+    ColorSpace, DeviceClass, ProfileHeader, ProfileHeaderObservation, ProfileId, ProfileVersion,
+    RenderingIntent,
 };
 pub use identity::IccProfileIdentity;
 pub use lut::{Clut, ClutPrecision, Lut8, Lut16, LutAToB, LutBToA, Matrix3x3, Matrix3x4};

@@ -54,6 +54,10 @@ diagnostics and conformance evidence. `ProfileHeader::try_from` applies the same
 registry and magic checks as `ProfileHeader::parse`; observation alone does not
 establish a valid profile or tag table.
 
+`ProfileId::from_profile_bytes` selects a declared nonzero ID or computes the
+canonical digest for an unset ID. It needs a complete header, not an admitted
+profile; `ProfileId::checksum` computes the raw encoded-byte digest.
+
 **Out of scope:** applying a profile's transform — that is [`gamut-cmm`](../gamut-cmm), the
 workspace CMM (epic #323), for which the `to_f64`/`eval` accessors are the integration seam — and
 **iccMAX** (`ICC.2`), a separate next-generation format (see

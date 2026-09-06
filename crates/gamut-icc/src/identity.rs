@@ -28,11 +28,7 @@ impl IccProfileIdentity {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let profile = IccProfile::parse(bytes)?;
         let header = &profile.header;
-        let canonical_id = if header.profile_id.is_zero() {
-            ProfileId::compute(bytes)
-        } else {
-            header.profile_id
-        };
+        let canonical_id = ProfileId::from_profile_bytes(bytes)?;
         Ok(Self {
             canonical_id,
             checksum: ProfileId::checksum(bytes),

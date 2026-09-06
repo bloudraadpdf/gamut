@@ -575,6 +575,22 @@ impl ProfileId {
         self.0 == [0; 16]
     }
 
+    /// Return the declared profile ID, or compute it when the header leaves it unset.
+    ///
+    /// This observes the header without admitting registry fields or the tag table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the complete 128-byte header is unavailable.
+    pub fn from_profile_bytes(profile_bytes: &[u8]) -> Result<Self> {
+        let declared = ProfileHeaderObservation::parse(profile_bytes)?.profile_id;
+        Ok(if declared.is_zero() {
+            Self::compute(profile_bytes)
+        } else {
+            declared
+        })
+    }
+
     /// Computes the profile ID (ICC.1:2022 §7.2.18): the MD5 of a fully serialized profile with
     /// the profile-flags (bytes 44–47), rendering-intent (64–67) and profile-ID (84–99) fields
     /// zeroed first, as the spec requires.
@@ -639,6 +655,33 @@ mod tests {
         b.extend_from_slice(&[0u8; 28]); // 100: reserved
         assert_eq!(b.len(), 128);
         b
+    }
+
+    #[test]
+    fn profile_identity_uses_declared_id_without_registry_admission() {
+        let mut bytes = vec![0; 160];
+        bytes[84..100].copy_from_slice(&[0x55; 16]);
+        assert_eq!(
+            ProfileId::from_profile_bytes(&bytes).unwrap(),
+            ProfileId([0x55; 16])
+        );
+    }
+
+    #[test]
+    fn profile_identity_computes_unset_id_with_mutable_fields_cleared() {
+        let bytes = vec![0; 160];
+        let expected = ProfileId::compute(&bytes);
+        let mut modified = bytes.clone();
+        modified[44..48].fill(0xff);
+        modified[64..68].fill(0xff);
+        assert_eq!(ProfileId::from_profile_bytes(&modified).unwrap(), expected);
+        modified[159] = 1;
+        assert_ne!(ProfileId::from_profile_bytes(&modified).unwrap(), expected);
+    }
+
+    #[test]
+    fn profile_identity_refuses_truncated_header() {
+        assert!(ProfileId::from_profile_bytes(&[0; 127]).is_err());
     }
 
     #[test]

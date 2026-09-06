@@ -222,6 +222,17 @@ pub struct ProfileHeaderObservation {
 }
 
 impl ProfileHeaderObservation {
+    /// The encoded version field, including both reserved bytes (§7.2.4).
+    #[must_use]
+    pub fn version_bytes(&self) -> [u8; 4] {
+        [
+            self.version.major,
+            self.version.minor_bugfix_byte(),
+            self.version_reserved[0],
+            self.version_reserved[1],
+        ]
+    }
+
     /// Read all header fields according to ICC.1:2022 §7.2, Table 17.
     ///
     /// # Errors
@@ -655,6 +666,14 @@ mod tests {
         b.extend_from_slice(&[0u8; 28]); // 100: reserved
         assert_eq!(b.len(), 128);
         b
+    }
+
+    #[test]
+    fn observed_version_preserves_all_four_encoded_bytes() {
+        let mut bytes = sample_header();
+        bytes[8..12].copy_from_slice(&[4, 0x23, 0x80, 0xff]);
+        let header = ProfileHeaderObservation::parse(&bytes).unwrap();
+        assert_eq!(header.version_bytes(), [4, 0x23, 0x80, 0xff]);
     }
 
     #[test]

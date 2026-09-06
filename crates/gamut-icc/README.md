@@ -53,6 +53,8 @@ unknown registry signatures, invalid magic or reserved bytes. Use it for
 diagnostics and conformance evidence. `ProfileHeader::try_from` applies the same
 registry and magic checks as `ProfileHeader::parse`; observation alone does not
 establish a valid profile or tag table.
+`ProfileHeaderObservation::version_bytes` retains the complete four-byte
+version declaration, including the reserved bytes, for external references.
 
 `ProfileId::from_profile_bytes` selects a declared nonzero ID or computes the
 canonical digest for an unset ID. It needs a complete header, not an admitted

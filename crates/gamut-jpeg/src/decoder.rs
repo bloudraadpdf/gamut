@@ -427,6 +427,20 @@ pub struct JpegMetadata {
     pub xmp: Option<Vec<u8>>,
     /// The ICC profile, reassembled from its APP2 `ICC_PROFILE` chunks.
     pub icc: Option<Vec<u8>>,
+    /// The Adobe APP14 colour transform, when the stream declares one.
+    pub adobe_transform: Option<AdobeColorTransform>,
+}
+
+/// The colour transform declared by an Adobe APP14 marker (Adobe TN #5116).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AdobeColorTransform {
+    /// Components are stored directly as RGB or CMYK (`transform = 0`).
+    Direct,
+    /// Three components are stored as YCbCr (`transform = 1`).
+    YCbCr,
+    /// Four components are stored as YCCK (`transform = 2`).
+    Ycck,
 }
 
 /// Reads a JPEG stream's embedded APP1/APP2 metadata without decoding any pixels.
@@ -483,6 +497,31 @@ pub fn metadata(data: &[u8]) -> Result<JpegMetadata> {
                 }
             }
             code::APP2 => icc.add(payload)?,
+            code::APP14 if payload.starts_with(b"Adobe") => {
+                let transform = match payload.get(11) {
+                    Some(0) => AdobeColorTransform::Direct,
+                    Some(1) => AdobeColorTransform::YCbCr,
+                    Some(2) => AdobeColorTransform::Ycck,
+                    Some(_) => {
+                        return Err(Error::invalid_input(
+                            env!("CARGO_PKG_NAME"),
+                            "JPEG: Adobe APP14 has an unknown colour transform",
+                        ));
+                    }
+                    None => {
+                        return Err(Error::invalid_input(
+                            env!("CARGO_PKG_NAME"),
+                            "JPEG: truncated Adobe APP14 segment",
+                        ));
+                    }
+                };
+                if meta.adobe_transform.replace(transform).is_some() {
+                    return Err(Error::invalid_input(
+                        env!("CARGO_PKG_NAME"),
+                        "JPEG: duplicate Adobe APP14 colour transform",
+                    ));
+                }
+            }
             _ => {}
         }
         pos = next;

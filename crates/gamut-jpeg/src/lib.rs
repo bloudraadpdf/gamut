@@ -114,7 +114,9 @@ pub use backend::{
     JpegStreamDecoder, JpegStreamEncoder, JpegStreamInfo, RasterRef, backend_declined,
     is_backend_declined,
 };
-pub use decoder::{JpegDecoder, JpegInfo, JpegMetadata, JpegProcess, info, metadata};
+pub use decoder::{
+    AdobeColorTransform, JpegDecoder, JpegInfo, JpegMetadata, JpegProcess, info, metadata,
+};
 pub use encoder::{ChromaSubsampling, JpegColorMode, JpegEncoder, RdOptimization, XYB_ICC_PROFILE};
 pub use marker::DensityUnit;
 pub use quant::{CHROMINANCE, LUMINANCE, QuantTables};

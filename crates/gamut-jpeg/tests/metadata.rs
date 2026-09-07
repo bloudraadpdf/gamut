@@ -4,7 +4,7 @@
 //! embedding (round-trips, chunk framing at the 65519-byte boundaries, size caps, segment order).
 
 use gamut_core::{Dimensions, EncodeImage, ErrorKind, Gray8, ImageRef, Rgb8};
-use gamut_jpeg::{JpegEncoder, JpegMetadata, metadata};
+use gamut_jpeg::{AdobeColorTransform, JpegEncoder, JpegMetadata, metadata};
 
 /// Encodes a minimal valid grayscale JPEG to splice APP segments into.
 fn base_jpeg() -> Vec<u8> {
@@ -44,6 +44,31 @@ fn icc_payload(index: u8, count: u8, data: &[u8]) -> Vec<u8> {
 #[test]
 fn plain_stream_has_no_metadata() {
     assert_eq!(metadata(&base_jpeg()).unwrap(), JpegMetadata::default());
+}
+
+#[test]
+fn adobe_app14_transform_is_observed_once_and_completely() {
+    let mut adobe = b"Adobe".to_vec();
+    adobe.extend_from_slice(&[0, 100, 0, 0, 0, 0, 2]);
+    let segment = app_segment(0xEE, &adobe);
+    let jpeg = splice(&base_jpeg(), &[segment.clone()]);
+    assert_eq!(
+        metadata(&jpeg).unwrap().adobe_transform,
+        Some(AdobeColorTransform::Ycck)
+    );
+
+    let duplicate = splice(&base_jpeg(), &[segment.clone(), segment]);
+    assert!(matches!(
+        metadata(&duplicate),
+        Err(error) if error.kind() == ErrorKind::InvalidInput
+    ));
+
+    adobe[11] = 3;
+    let unknown = splice(&base_jpeg(), &[app_segment(0xEE, &adobe)]);
+    assert!(matches!(
+        metadata(&unknown),
+        Err(error) if error.kind() == ErrorKind::InvalidInput
+    ));
 }
 
 #[test]

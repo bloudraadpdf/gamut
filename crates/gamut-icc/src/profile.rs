@@ -4,7 +4,7 @@ use crate::error::{IccError, Result};
 use crate::header::ProfileHeader;
 use crate::primitives::Signature;
 use crate::tag_types::{TagData, decode_tag};
-use crate::tags::{parse_tag_table, tag_table_end};
+use crate::tags::{TagEntry, parse_tag_table, tag_table_end};
 
 /// A parsed ICC profile: the [`ProfileHeader`] plus its tags, decoded and in file order.
 ///
@@ -49,29 +49,14 @@ impl IccProfile {
     /// The parse implementation shared by [`IccProfile::parse`] and [`crate::IccReader`]; `strict`
     /// adds conformance checks the lenient default skips.
     pub(crate) fn parse_with(bytes: &[u8], strict: bool) -> Result<Self> {
-        let header = ProfileHeader::parse(bytes)?;
-        if strict && header.reserved.iter().any(|&b| b != 0) {
-            return Err(IccError::Malformed(
-                "icc: nonzero reserved header bytes (strict)",
-            ));
-        }
-        let entries = parse_tag_table(bytes)?;
+        let (header, entries) = read_profile_index(bytes, strict)?;
         let data_start = tag_table_end(entries.len());
         let mut tags = Vec::with_capacity(entries.len());
         for entry in entries {
-            let start = entry.offset as usize;
-            if strict && start < data_start {
-                return Err(IccError::Malformed(
-                    "icc: tag data overlaps the header or tag table (strict)",
-                ));
-            }
-            let end = start
-                .checked_add(entry.size as usize)
-                .ok_or(IccError::Malformed("icc: tag size overflow"))?;
-            let element = bytes
-                .get(start..end)
-                .ok_or(IccError::Malformed("icc: tag data out of bounds"))?;
-            tags.push((entry.signature, decode_tag(element)?));
+            tags.push((
+                entry.signature,
+                decode_entry(bytes, entry, strict, data_start)?,
+            ));
         }
         Ok(Self { header, tags })
     }
@@ -88,6 +73,40 @@ impl IccProfile {
             .find(|(s, _)| *s == signature)
             .map(|(_, data)| data)
     }
+}
+
+pub(crate) fn read_profile_index(
+    bytes: &[u8],
+    strict: bool,
+) -> Result<(ProfileHeader, Vec<TagEntry>)> {
+    let header = ProfileHeader::parse(bytes)?;
+    if strict && header.reserved.iter().any(|&byte| byte != 0) {
+        return Err(IccError::Malformed(
+            "icc: nonzero reserved header bytes (strict)",
+        ));
+    }
+    Ok((header, parse_tag_table(bytes)?))
+}
+
+pub(crate) fn decode_entry(
+    bytes: &[u8],
+    entry: TagEntry,
+    strict: bool,
+    data_start: usize,
+) -> Result<TagData> {
+    let start = entry.offset as usize;
+    if strict && start < data_start {
+        return Err(IccError::Malformed(
+            "icc: tag data overlaps the header or tag table (strict)",
+        ));
+    }
+    let end = start
+        .checked_add(entry.size as usize)
+        .ok_or(IccError::Malformed("icc: tag size overflow"))?;
+    let element = bytes
+        .get(start..end)
+        .ok_or(IccError::Malformed("icc: tag data out of bounds"))?;
+    decode_tag(element)
 }
 
 #[cfg(test)]

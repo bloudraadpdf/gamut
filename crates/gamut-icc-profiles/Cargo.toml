@@ -15,5 +15,9 @@ categories.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["cmyk"]
+cmyk = []
+
 [dependencies]
 gamut-icc.workspace = true

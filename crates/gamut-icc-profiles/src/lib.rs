@@ -13,17 +13,21 @@ pub enum StandardProfile {
     /// Compact sGrey v2 monitor profile.
     SgreyV2,
     /// CGATS21 CRPC6 v4 CMYK output profile.
+    #[cfg(feature = "cmyk")]
     Cgats21Crpc6,
     /// ISO Coated v2 ECI CMYK output profile.
+    #[cfg(feature = "cmyk")]
     IsoCoatedV2Eci,
 }
 
 impl StandardProfile {
     /// Complete catalogue in stable declaration order.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: &'static [Self] = &[
         Self::SrgbV2,
         Self::SgreyV2,
+        #[cfg(feature = "cmyk")]
         Self::Cgats21Crpc6,
+        #[cfg(feature = "cmyk")]
         Self::IsoCoatedV2Eci,
     ];
 
@@ -34,22 +38,27 @@ impl StandardProfile {
     /// case-insensitive.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
-        if name.eq_ignore_ascii_case("sRGB IEC61966-2.1") || name.eq_ignore_ascii_case("sRGB") {
-            Some(Self::SrgbV2)
-        } else if name.eq_ignore_ascii_case("sGrey-v2-magic") || name.eq_ignore_ascii_case("sGrey")
-        {
-            Some(Self::SgreyV2)
-        } else if name.eq_ignore_ascii_case("CGATS21_CRPC6")
-            || name.eq_ignore_ascii_case("CGATS21 CRPC6")
-        {
-            Some(Self::Cgats21Crpc6)
-        } else if name.eq_ignore_ascii_case("ISOcoated_v2_eci")
-            || name.eq_ignore_ascii_case("ISO Coated v2 ECI")
-            || name.eq_ignore_ascii_case("Coated FOGRA39 ICC v2")
-        {
-            Some(Self::IsoCoatedV2Eci)
-        } else {
-            None
+        Self::ALL.iter().copied().find(|profile| {
+            profile
+                .aliases()
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(name))
+        })
+    }
+
+    /// Conventional names that resolve to this profile.
+    const fn aliases(self) -> &'static [&'static str] {
+        match self {
+            Self::SrgbV2 => &["sRGB IEC61966-2.1", "sRGB"],
+            Self::SgreyV2 => &["sGrey-v2-magic", "sGrey"],
+            #[cfg(feature = "cmyk")]
+            Self::Cgats21Crpc6 => &["CGATS21_CRPC6", "CGATS21 CRPC6"],
+            #[cfg(feature = "cmyk")]
+            Self::IsoCoatedV2Eci => &[
+                "ISOcoated_v2_eci",
+                "ISO Coated v2 ECI",
+                "Coated FOGRA39 ICC v2",
+            ],
         }
     }
 
@@ -59,7 +68,9 @@ impl StandardProfile {
         match self {
             Self::SrgbV2 => "sRGB IEC61966-2.1",
             Self::SgreyV2 => "sGrey-v2-magic",
+            #[cfg(feature = "cmyk")]
             Self::Cgats21Crpc6 => "CGATS21_CRPC6",
+            #[cfg(feature = "cmyk")]
             Self::IsoCoatedV2Eci => "ISOcoated_v2_eci",
         }
     }
@@ -70,7 +81,9 @@ impl StandardProfile {
         match self {
             Self::SrgbV2 => include_bytes!("../assets/sRGB2014.icc"),
             Self::SgreyV2 => include_bytes!("../assets/sGrey-v2-magic.icc"),
+            #[cfg(feature = "cmyk")]
             Self::Cgats21Crpc6 => include_bytes!("../assets/CGATS21_CRPC6.icc"),
+            #[cfg(feature = "cmyk")]
             Self::IsoCoatedV2Eci => include_bytes!("../assets/ISOcoated_v2_eci.icc"),
         }
     }
@@ -106,12 +119,14 @@ mod tests {
                 ColorSpace::Gray,
                 DeviceClass::Display,
             ),
+            #[cfg(feature = "cmyk")]
             (
                 StandardProfile::Cgats21Crpc6,
                 3_462_316,
                 ColorSpace::Cmyk,
                 DeviceClass::Output,
             ),
+            #[cfg(feature = "cmyk")]
             (
                 StandardProfile::IsoCoatedV2Eci,
                 1_829_077,
@@ -134,10 +149,12 @@ mod tests {
         let expected = [
             (StandardProfile::SrgbV2, "3947129e0967089c736f91a2989d89d8"),
             (StandardProfile::SgreyV2, "ef6221686b517e4665480639202dacd5"),
+            #[cfg(feature = "cmyk")]
             (
                 StandardProfile::Cgats21Crpc6,
                 "f788f997cde13840dad9365c9df5eb0f",
             ),
+            #[cfg(feature = "cmyk")]
             (
                 StandardProfile::IsoCoatedV2Eci,
                 "bda07efcacf5377e91edacb0454ea7e5",
@@ -155,8 +172,11 @@ mod tests {
             ("sRGB IEC61966-2.1", StandardProfile::SrgbV2),
             ("SRGB", StandardProfile::SrgbV2),
             ("sGrey", StandardProfile::SgreyV2),
+            #[cfg(feature = "cmyk")]
             ("CGATS21 CRPC6", StandardProfile::Cgats21Crpc6),
+            #[cfg(feature = "cmyk")]
             ("ISO Coated v2 ECI", StandardProfile::IsoCoatedV2Eci),
+            #[cfg(feature = "cmyk")]
             ("Coated FOGRA39 ICC v2", StandardProfile::IsoCoatedV2Eci),
         ];
 

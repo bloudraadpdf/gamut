@@ -51,7 +51,7 @@ fn adobe_app14_transform_is_observed_once_and_completely() {
     let mut adobe = b"Adobe".to_vec();
     adobe.extend_from_slice(&[0, 100, 0, 0, 0, 0, 2]);
     let segment = app_segment(0xEE, &adobe);
-    let jpeg = splice(&base_jpeg(), &[segment.clone()]);
+    let jpeg = splice(&base_jpeg(), std::slice::from_ref(&segment));
     assert_eq!(
         metadata(&jpeg).unwrap().adobe_transform,
         Some(AdobeColorTransform::Ycck)

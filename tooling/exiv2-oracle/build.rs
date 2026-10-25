@@ -123,6 +123,7 @@ fn main() {
     println!("cargo:rustc-link-lib=static=exiv2");
     println!("cargo:rustc-link-lib=static=expat");
     println!("cargo:rustc-link-lib=dylib=z");
+    build_env::link_cmake_iconv(&exiv2_build);
 
     println!("cargo:rerun-if-changed=src/shim.cpp");
     println!("cargo:rerun-if-changed=build.rs");

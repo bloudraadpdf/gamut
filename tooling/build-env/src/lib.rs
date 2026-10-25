@@ -297,6 +297,33 @@ impl BuildEnv {
     }
 }
 
+/// Links the iconv that a CMake `find_package(Iconv)` in `build_dir` resolved.
+///
+/// glibc has iconv in libc (`Iconv_IS_BUILT_IN`); macOS and musl ship it as a separate
+/// `libiconv`, which a static archive that calls `iconv_open` must name at the final link.
+pub fn link_cmake_iconv(build_dir: &Path) {
+    let cache_path = build_dir.join("CMakeCache.txt");
+    let cache = std::fs::read_to_string(&cache_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", cache_path.display()));
+    let entry = |key: &str| {
+        cache.lines().find_map(|line| {
+            line.strip_prefix(key)?
+                .split_once('=')
+                .map(|(_, value)| value)
+        })
+    };
+    let built_in = entry("Iconv_IS_BUILT_IN:").is_some_and(|v| {
+        matches!(
+            v.to_ascii_uppercase().as_str(),
+            "1" | "ON" | "YES" | "TRUE" | "Y"
+        )
+    });
+    let library = entry("Iconv_LIBRARY:").filter(|v| !v.is_empty() && !v.ends_with("-NOTFOUND"));
+    if !built_in && library.is_some() {
+        println!("cargo:rustc-link-lib=dylib=iconv");
+    }
+}
+
 /// Compilers to run at once in a native build, from the ambient environment.
 ///
 /// Precedence, most specific first:

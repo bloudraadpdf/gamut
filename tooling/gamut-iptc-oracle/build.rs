@@ -75,6 +75,7 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=exiv2");
+    build_env::link_cmake_iconv(&build);
 
     println!("cargo:rerun-if-changed=src/oracle_shim.cpp");
     println!("cargo:rerun-if-changed=build.rs");

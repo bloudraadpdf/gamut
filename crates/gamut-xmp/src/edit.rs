@@ -200,13 +200,13 @@ fn packet_uses_xmpmeta(content: &str) -> bool {
             Ok(quick_xml::events::Event::Start(start))
             | Ok(quick_xml::events::Event::Empty(start)) => {
                 let name = start.name();
-                return name.local_name().as_ref() == b"xmpmeta"
+                return name.local_name().as_ref() == "xmpmeta"
                     && start
                         .attributes()
                         .filter_map(core::result::Result::ok)
                         .any(|attr| {
-                            attr.key.as_ref().starts_with(b"xmlns")
-                                && attr.value.as_ref() == XMPMETA_NAMESPACE.as_bytes()
+                            attr.key.as_ref().starts_with("xmlns")
+                                && attr.value == XMPMETA_NAMESPACE
                         });
             }
             Ok(quick_xml::events::Event::Eof) | Err(_) => return false,

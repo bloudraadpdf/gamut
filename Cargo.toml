@@ -74,7 +74,7 @@ clap = { version = "4.5", features = ["derive"] }
 # error type included) exposes no quick-xml types, so this stays an implementation detail that can
 # be bumped without a breaking change. Default features only (UTF-8; the namespace-resolving
 # `NsReader` is in core).
-quick-xml = "0.41"
+quick-xml = "0.42"
 wasm-bindgen = "0.2"
 # Decode-only: gamut-cli reads PNG/JPEG/PPM inputs; all encoding stays in gamut crates.
 # `default-features = false` drops image's own avif/webp decoders and rayon.

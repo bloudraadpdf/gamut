@@ -230,14 +230,8 @@ fn build_tree(xml: &str, base: usize) -> Result<Element> {
                     None => root = Some(done),
                 }
             }
-            Event::Text(t) => {
-                let text = t.decode().map_err(|e| XmpError::Xml(e.to_string()))?;
-                push_text(&mut stack, &text);
-            }
-            Event::CData(c) => {
-                let text = c.decode().map_err(|e| XmpError::Xml(e.to_string()))?;
-                push_text(&mut stack, &text);
-            }
+            Event::Text(t) => push_text(&mut stack, &t),
+            Event::CData(c) => push_text(&mut stack, &c),
             Event::GeneralRef(r) => push_text(&mut stack, &resolve_entity(&r)?),
             // Declaration, processing instructions, comments, and DOCTYPE carry no XMP data
             // (Eof exited above).
@@ -262,10 +256,10 @@ fn start_element<R>(
     for attr in e.attributes() {
         let attr = attr.map_err(|err| XmpError::Xml(err.to_string()))?;
         // `xmlns`/`xmlns:*` are namespace declarations, not data; the resolver already consumed them.
-        if attr.key.0 == b"xmlns" || attr.key.0.starts_with(b"xmlns:") {
+        if attr.key.0 == "xmlns" || attr.key.0.starts_with("xmlns:") {
             bindings.push(XmpNamespaceBinding {
-                prefix: attr.key.0.strip_prefix(b"xmlns:").map(decode),
-                namespace: decode(attr.value.as_ref()),
+                prefix: attr.key.0.strip_prefix("xmlns:").map(str::to_owned),
+                namespace: attr.value.into_owned(),
                 span: XmpSourceSpan { start, end },
             });
             continue;
@@ -295,9 +289,8 @@ fn start_element<R>(
     })
 }
 
-fn lexical_prefix(name: &[u8]) -> Option<String> {
-    let colon = name.iter().position(|byte| *byte == b':')?;
-    Some(decode(&name[..colon]))
+fn lexical_prefix(name: &str) -> Option<String> {
+    name.split_once(':').map(|(prefix, _)| prefix.to_owned())
 }
 
 /// Resolves an element's qualified name to `(namespace URI, local name)`.
@@ -316,19 +309,16 @@ fn resolve_attribute<R>(reader: &NsReader<R>, name: QName) -> Result<(Option<Str
 /// Turns a resolution result into owned strings, surfacing an undeclared prefix as a typed error.
 fn finish_resolve(resolved: ResolveResult, local: LocalName) -> Result<(Option<String>, String)> {
     let ns = match resolved {
-        ResolveResult::Bound(ns) => Some(decode(ns.as_ref())),
+        ResolveResult::Bound(ns) => Some(ns.into_inner().to_owned()),
         ResolveResult::Unbound => None,
-        ResolveResult::Unknown(prefix) => return Err(XmpError::UnknownPrefix(decode(&prefix))),
+        ResolveResult::Unknown(prefix) => return Err(XmpError::UnknownPrefix(prefix)),
     };
-    Ok((ns, decode(local.as_ref())))
+    Ok((ns, local.into_inner().to_owned()))
 }
 
 /// Resolves a general/character entity reference (`&amp;`, `&#x41;`, …) to its text.
 fn resolve_entity(reference: &BytesRef) -> Result<String> {
-    let name = reference
-        .decode()
-        .map_err(|e| XmpError::Xml(e.to_string()))?;
-    quick_xml::escape::unescape(&format!("&{name};"))
+    quick_xml::escape::unescape(&format!("&{};", &**reference))
         .map(|cow| cow.into_owned())
         .map_err(|e| XmpError::Xml(e.to_string()))
 }
@@ -342,11 +332,6 @@ fn push_text(stack: &mut [Element], text: &str) {
     if let Some(elem) = stack.last_mut() {
         elem.children.push(Node::Text(text.to_owned()));
     }
-}
-
-/// UTF-8 bytes → `String`. The packet is validated as UTF-8 before lexing, so this never loses data.
-fn decode(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
 }
 
 /// Maps a `quick-xml` lexing error into an [`XmpError`] without exposing the `quick-xml` type.

@@ -32,4 +32,4 @@ gamut-jxl-sys = { path = "../../crates/gamut-jxl-sys" }
 
 [build-dependencies]
 cc = "1"
-zip = "2"
+zip = "9"

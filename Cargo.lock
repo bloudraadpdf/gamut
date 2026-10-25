@@ -762,7 +762,7 @@ name = "gamut-deflate"
 version = "0.1.0"
 dependencies = [
  "divan",
- "miniz_oxide 0.8.9",
+ "miniz_oxide 0.9.1",
  "zlib-oracle",
  "zopfli",
 ]
@@ -782,7 +782,7 @@ dependencies = [
  "gamut-jxl",
  "gamut-metadata",
  "libtiff-oracle",
- "miniz_oxide 0.8.9",
+ "miniz_oxide 0.9.1",
 ]
 
 [[package]]
@@ -934,7 +934,7 @@ dependencies = [
  "gamut-core",
  "gamut-deflate",
  "libpng-oracle",
- "miniz_oxide 0.8.9",
+ "miniz_oxide 0.9.1",
 ]
 
 [[package]]
@@ -956,7 +956,7 @@ dependencies = [
  "gamut-deflate",
  "gamut-ifd",
  "libtiff-oracle",
- "miniz_oxide 0.8.9",
+ "miniz_oxide 0.9.1",
 ]
 
 [[package]]

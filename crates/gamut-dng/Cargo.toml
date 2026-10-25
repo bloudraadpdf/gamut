@@ -47,7 +47,7 @@ gamut-jxl = { workspace = true, features = ["decode"] }
 # which `gamut-deflate` (encoder-only by design) blesses for exactly this. Both are pure Rust, so
 # the shipped crate stays C-free.
 gamut-deflate.workspace = true
-miniz_oxide = "0.8"
+miniz_oxide = "0.9"
 
 [dev-dependencies]
 # Authoritative conformance oracle: the headless-built Adobe DNG SDK 1.7.1 (gamut encode →

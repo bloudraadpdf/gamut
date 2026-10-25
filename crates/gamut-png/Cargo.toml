@@ -25,7 +25,7 @@ gamut-deflate.workspace = true
 # zlib *inflation* for the decoder (IDAT, iCCP, zTXt, compressed iTXt). The in-house gamut-deflate
 # is deliberately encoder-only, and its docs bless miniz_oxide as the decode-side inflate (the same
 # choice gamut-dng made); revisiting an in-house inflater is tracked by issue #196.
-miniz_oxide = "0.8"
+miniz_oxide = "0.9"
 
 [dev-dependencies]
 # Differential cross-check oracle: a vendored, statically-linked libpng (built from the

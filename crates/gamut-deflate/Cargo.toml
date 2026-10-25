@@ -25,7 +25,7 @@ zlib-oracle = { path = "../../tooling/zlib-oracle" }
 # and `zopfli` is the state-of-the-art space-optimal encoder (the tier `Level::Best` competes
 # with). The benches assert `Level::Best` earns its keep against both.
 divan.workspace = true
-miniz_oxide = "0.8"
+miniz_oxide = "0.9"
 zopfli = "0.8"
 
 [[bench]]

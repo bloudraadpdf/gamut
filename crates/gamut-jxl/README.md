@@ -23,7 +23,7 @@ whether the direction works:
   dependency beyond the platform C++ runtime (`libstdc++`/`libc++`). Building `encode` therefore
   needs **cmake and a C++ toolchain** at build time.
 - **Decode — pure Rust.** The `decode` feature wraps the pure-Rust
-  [`jxl` crate v0.4.3](https://crates.io/crates/jxl) (jxl-rs, the libjxl organisation's Rust
+  [`jxl` crate v0.8.0](https://crates.io/crates/jxl) (jxl-rs, the libjxl organisation's Rust
   decoder, BSD-3-Clause). It needs no C toolchain and compiles for every target, `wasm32`
   included.
 

@@ -8,7 +8,7 @@ crate [README](README.md#why-a-wrapper).
 
 **Architecture:** encode wraps **libjxl v0.12.0** (statically linked via
 [`gamut-jxl-sys`](../gamut-jxl-sys); source vendored by the BSD-3-Clause `jpegxl-src = "=0.12.0"`,
-bundled skcms, no lcms2); decode wraps the pure-Rust [`jxl` crate v0.4.3](https://crates.io/crates/jxl)
+bundled skcms, no lcms2); decode wraps the pure-Rust [`jxl` crate v0.8.0](https://crates.io/crates/jxl)
 (jxl-rs). The encoder is available on all targets except `wasm32` without emscripten:
 `wasm32-unknown-emscripten` links the emsdk-built libjxl (full encoder), while
 `wasm32-unknown-unknown`/`wasm32-wasip*` are decode-only — no C/C++ toolchain targets those ABIs.
@@ -71,9 +71,8 @@ on a hand-written golden bitstream.
   cost of one extra pass and allocation the previously fused loop avoided.
 - **Best-effort decode of truncated streams (issue #256).** `DecodePartialImage` decodes an
   incomplete codestream to the best image it supports plus a `JxlPartialReport` — the
-  `is_complete()` flag, a `JxlRender` (`HeaderOnly` / `BestEffort` / `Complete`), jxl-rs's completed
-  -pass count and its further-bytes hint. Implemented over jxl-rs `flush_pixels`, at the end of the
-  buffer, in the default `JxlProgressiveMode::Pass`. What it yields is bounded by JPEG XL's own
+  `is_complete()` flag, a `JxlRender` (`HeaderOnly` / `BestEffort` / `Complete`) and jxl-rs's
+  further-bytes hint. Implemented over jxl-rs `flush_pixels`, at the end of the buffer. What it yields is bounded by JPEG XL's own
   structure and documented as such: a truncated **VarDCT** stream renders groups with no detail pass
   from the upsampled DC image, so the result is a full-size coarse preview sharpening toward the
   front of the stream; a truncated **Modular** stream renders the groups that arrived exactly and
@@ -143,11 +142,8 @@ unlocks it.
   it is purely additive to the seam (the traits and the fallback contract do not change).
 - **Chunked / streaming decode input.** Partial *output* ships (`DecodePartialImage`, above), but the
   decoder still consumes a whole buffer per call: there is no `feed(&[u8])` entry point that keeps a
-  decoder alive across chunks and re-renders as bytes arrive. Unlocks by holding jxl-rs's typestate
-  decoder across calls rather than driving it once. Progressive-mode control
-  (`JxlProgressiveMode::Eager`, which renders on every `process` rather than on completed passes)
-  belongs with it: the partial path deliberately keeps the `Pass` default so a complete stream
-  decodes identically through both entry points, and changing that needs a config surface.
+  decoder alive across chunks and re-renders as bytes arrive. Unlocks by holding jxl-rs's event
+  decoder across calls rather than driving it once.
 - **libjxl 0.12.x tracking.** The pin is exact (`jpegxl-src = "=0.12.0"` → libjxl 0.12.0). Bumps are
   deliberate: they must re-verify the FFI declarations against the new headers via the
   `gamut-jxl-sys` version-pin / symbol-drift test (`tests/version.rs`, asserting version `12000`) and
@@ -166,7 +162,7 @@ Relaxing any of these is additive if the charter ever changes, but none is plann
 
 ## jxl-rs spec-coverage ledger (issue #243 deliverable)
 
-jxl-rs 0.4.3 covers essentially the full ISO/IEC 18181-1 **pixel-decode** surface (VarDCT, Modular
+jxl-rs (ledger verified against 0.4.3) covers essentially the full ISO/IEC 18181-1 **pixel-decode** surface (VarDCT, Modular
 incl. RCT/palette/squeeze, XYB, splines/patches/noise, spot colours, ICC incl.
 compressed-restricted, CICP, the `jxlc`/`jxlp`/`jxli` container framings, animation, progressive).
 The documented gaps, with upstream links (verified against the tracker 2026-07-11):
@@ -190,8 +186,8 @@ The documented gaps, with upstream links (verified against the tracker 2026-07-1
   [#771](https://github.com/libjxl/jxl-rs/issues/771)); high memory on progressive lossless
   ([#782](https://github.com/libjxl/jxl-rs/issues/782)). `DecodePartialImage` (issue #256) now
   reaches the flush path, so the exposure is worth stating precisely: gamut calls `flush_pixels`
-  **exactly once, at end of input**, on a single visible frame, in the default
-  `JxlProgressiveMode::Pass`. It does not feed input in chunks, does not use `Eager`, and neither
+  **exactly once, at end of input**, on a single visible frame. It does not feed input in chunks, and
+  neither
   produces nor requests preview frames (`skip_preview` defaults on, and gamut emits no preview) or
   animation — so the preview half of #730 and the multi-chunk half of #783/#771 are unreachable from
   gamut-produced streams. What *is* reached is the Modular partial-`LfGlobal` branch, the one place

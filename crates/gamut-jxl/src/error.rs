@@ -141,6 +141,16 @@ mod decode {
     use gamut_core::Error;
     use jxl::error::Error as JxlError;
 
+    /// The error for a jxl-rs event or accessor state that its event order rules out: a bug in
+    /// gamut-jxl's driving of the decoder, not bad input.
+    pub(crate) fn out_of_order() -> Error {
+        debug_assert!(false, "JXL: decoder events out of order (bug in gamut-jxl)");
+        Error::invalid_input(
+            env!("CARGO_PKG_NAME"),
+            "JXL: decoder events out of order (bug in gamut-jxl)",
+        )
+    }
+
     /// Translates a jxl-rs decode [`JxlError`] into a [`gamut_core::Error`] with a static `"JXL: …"`
     /// message.
     ///
@@ -149,17 +159,17 @@ mod decode {
     /// and a generic fallback:
     ///
     /// - an invalid magic/signature → [`Error::InvalidInput`] (not a JPEG XL stream);
-    /// - the pixel-limit guard tripping → [`Error::InvalidInput`] (image too large);
+    /// - the sample-limit guard tripping → [`Error::InvalidInput`] (image too large);
     /// - features gamut can't present — a colour image requested as grayscale, or output that would
     ///   need a colour-management transform we don't run — → [`Error::Unsupported`];
-    /// - buffer-count/-size mismatches, which can only be a bug in this wrapper's own driver → a
-    ///   `debug_assert!` plus [`Error::InvalidInput`];
+    /// - buffer-count/-size mismatches and API misuse, which can only be a bug in this wrapper's own
+    ///   driver → a `debug_assert!` plus [`Error::InvalidInput`];
     /// - everything else (malformed codestream, unsupported-but-valid feature, allocation failure) →
     ///   the generic [`Error::InvalidInput`] fallback.
     ///
-    /// Truncation is *not* handled here: jxl-rs signals "needs more input" as a
-    /// [`ProcessingResult::NeedsMoreInput`](jxl::api::ProcessingResult), never an `Err`, so the
-    /// decoder maps truncation to [`Error::InvalidInput`] itself (see [`crate::decoder`]).
+    /// Truncation is *not* handled here: jxl-rs signals "needs more input" as an
+    /// [`Event::NeedMoreInput`](jxl::api::Event::NeedMoreInput), never an `Err`, so the decoder
+    /// maps truncation to [`Error::InvalidInput`] itself (see [`crate::decoder`]).
     pub(crate) fn map_decode_error(err: JxlError) -> Error {
         let detail = err.to_string();
         let classified = match err {
@@ -167,7 +177,7 @@ mod decode {
                 env!("CARGO_PKG_NAME"),
                 "JXL: not a valid JPEG XL codestream",
             ),
-            // The decoder's `pixel_limit` guard rejects oversized images with this error.
+            // The decoder's `sample_limit` guard rejects oversized images with this error.
             JxlError::ImageSizeTooLarge(..)
             | JxlError::ImageDimensionTooLarge(..)
             | JxlError::InvalidImageSize(..)
@@ -183,16 +193,13 @@ mod decode {
             ),
             // Output paths that would require a colour-management (ICC/CMS) transform, which gamut
             // does not configure.
-            JxlError::ICCOutputNoCMS
-            | JxlError::NonXybOutputNoCMS
-            | JxlError::IccUnsupportedTransferFunction
-            | JxlError::TransferFunctionUnknown
-            | JxlError::CmsError(_)
-            | JxlError::CmsChannelCountIncrease { .. }
-            | JxlError::CmsConsumedChannelRequested { .. } => Error::unsupported(
-                env!("CARGO_PKG_NAME"),
-                "JXL: color management (ICC/CMS) is not supported",
-            ),
+            JxlError::IccUnsupportedTransferFunction | JxlError::TransferFunctionUnknown => {
+                Error::unsupported(
+                    env!("CARGO_PKG_NAME"),
+                    "JXL: color management (ICC/CMS) is not supported",
+                )
+            }
+            JxlError::ApiUsageError(_) => out_of_order(),
             // The wrapper always hands jxl-rs exactly one correctly sized output buffer; a mismatch
             // is a bug in `crate::decoder`, not bad input.
             JxlError::WrongBufferCount(..) | JxlError::InvalidOutputBufferSize(..) => {
@@ -234,7 +241,7 @@ mod decode {
 
         #[test]
         fn oversized_maps_to_pixel_limit() {
-            // The `pixel_limit` decoder option rejects oversized images with `ImageSizeTooLarge`.
+            // The `sample_limit` decoder option rejects oversized images with `ImageSizeTooLarge`.
             for error in [
                 JxlError::ImageSizeTooLarge(1 << 20, 1 << 20),
                 JxlError::ImageDimensionTooLarge(1 << 40),
@@ -260,9 +267,8 @@ mod decode {
         #[test]
         fn color_management_errors_map_to_unsupported() {
             for error in [
-                JxlError::ICCOutputNoCMS,
-                JxlError::NonXybOutputNoCMS,
-                JxlError::CmsError("boom".into()),
+                JxlError::IccUnsupportedTransferFunction,
+                JxlError::TransferFunctionUnknown,
             ] {
                 assert_mapped(
                     map_decode_error(error),
@@ -293,8 +299,15 @@ mod decode {
         fn wrong_buffer_count_debug_asserts() {
             let _ = map_decode_error(JxlError::WrongBufferCount(1, 2));
         }
+
+        #[cfg(debug_assertions)]
+        #[test]
+        #[should_panic = "decoder events out of order"]
+        fn api_usage_error_debug_asserts() {
+            let _ = map_decode_error(JxlError::ApiUsageError("set_pixel_format"));
+        }
     }
 }
 
 #[cfg(feature = "decode")]
-pub(crate) use decode::map_decode_error;
+pub(crate) use decode::{map_decode_error, out_of_order};

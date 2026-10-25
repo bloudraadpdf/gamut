@@ -84,7 +84,7 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 # feature is OFF because it enables `avx512`, whose intrinsics need Rust 1.89+ and x86-only
 # nightly-adjacent paths; the listed per-arch features are cfg-gated internally and safe to enable
 # on every target (including wasm32, where they compile out).
-jxl = { version = "0.4.3", default-features = false, features = ["sse42", "avx", "neon"] }
+jxl = { version = "0.8.0", default-features = false, features = ["sse42", "avx", "neon"] }
 # libwebp FFI — used ONLY as a dev-dependency oracle in gamut-webp's differential tests, never
 # in shipped code. Handwritten bindings (no bindgen/libclang); statically links bundled libwebp,
 # so the test build needs a C toolchain while the library itself stays C-free.

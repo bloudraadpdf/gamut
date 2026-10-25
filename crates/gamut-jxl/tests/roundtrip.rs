@@ -258,10 +258,9 @@ fn color_stream_requested_as_gray8_is_unsupported() {
 #[test]
 fn sixteen_bit_stream_requested_as_rgb8_downscales() {
     // Decoding a 16-bit lossless stream into an 8-bit request exercises jxl-rs's bit-depth
-    // reduction. jxl-rs does *not* truncate the high byte (`>> 8`); it renormalises through f32 and
-    // rounds — the exact observed rule is `round(v / 65535 * 255)` (nearest, ties away from zero),
-    // the natural full-range rescale. We assert that exact rule, and separately that it stays within
-    // ±1 of a plain high-byte truncation (a coarse sanity bound).
+    // reduction. jxl-rs renormalises through f32, adds a zero-mean blue-noise dither in
+    // (-0.5, +0.5) and rounds, so every 8-bit code lies strictly within one code of the exact
+    // full-range rescale `v / 65535 * 255`.
     let (w, h) = (16, 16);
     let dims = Dimensions::new(w, h).unwrap();
     let px16 = gen_u16(w, h, Rgb16::CHANNELS);
@@ -272,16 +271,10 @@ fn sixteen_bit_stream_requested_as_rgb8_downscales() {
     assert_eq!(out8.dimensions(), dims);
     for (i, &s16) in px16.iter().enumerate() {
         let got = out8.as_samples()[i];
-        let exact = (f32::from(s16) / 65535.0 * 255.0).round() as u8;
-        assert_eq!(
-            got, exact,
-            "16->8 rule mismatch at sample {i}: 0x{s16:04X} -> {got} (want {exact})"
-        );
-        // Sanity: never more than one code off a naive high-byte truncation.
-        let truncated = (s16 >> 8) as u8;
+        let exact = f32::from(s16) / 65535.0 * 255.0;
         assert!(
-            got.abs_diff(truncated) <= 1,
-            "16->8 at sample {i}: {got} vs truncation {truncated} differ by >1"
+            (f32::from(got) - exact).abs() < 1.0,
+            "16->8 at sample {i}: 0x{s16:04X} -> {got}, beyond one code of {exact}"
         );
     }
 }

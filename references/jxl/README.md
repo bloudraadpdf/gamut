@@ -14,7 +14,7 @@ versions are the ground truth its tests are gated against:
   statically built via the BSD-3-Clause [`jpegxl-src`](https://crates.io/crates/jpegxl-src) crate,
   pinned `= 0.12.0`, and linked through [`gamut-jxl-sys`](../../crates/gamut-jxl-sys) (which also
   exposes libjxl's decoder as the differential-test oracle).
-- **jxl-rs (`jxl` crate) v0.4.3** — the pure-Rust **decode** implementation.
+- **jxl-rs (`jxl` crate) v0.8.0** — the pure-Rust **decode** implementation.
 
 Bumping either is a **deliberate** change, not a routine dependency update: it must re-run the
 `gamut-jxl` differential suite and the `gamut-jxl-sys` version-pin / symbol-drift tests

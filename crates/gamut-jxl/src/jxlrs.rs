@@ -1,44 +1,48 @@
 //! The **built-in decode tail**: a safe front end over the pure-Rust jxl-rs decoder (the [`jxl`]
 //! crate), tried last by [`JxlDecoder`](crate::JxlDecoder) after every pushed backend.
 //!
-//! Decoding drives jxl-rs's typestate API (`Initialized → WithImageInfo → WithFrameInfo`) once per
-//! call, requesting the stream's *natural* colour layout at the caller's requested bit width, then
+//! Decoding drives jxl-rs's event API (`BasicInfo → FrameHeader → FrameComplete`) once per call, requesting the stream's *natural* colour layout at the caller's requested bit width, then
 //! reconciling channels to the requested [`gamut_core::Pixel`] layout in [`crate::convert`]. All of
 //! that is 100% safe Rust: this module contains no `unsafe`.
 
 use gamut_core::convert::{ConvertPolicy, LumaPolicy, RawImage, convert_from_raw};
 use gamut_core::{Dimensions, Error, ImageBuf, Pixel, PixelFormat, Result};
-use jxl::api::states::Initialized;
 use jxl::api::{
-    Endianness, JxlBitDepth, JxlColorProfile, JxlColorType, JxlDataFormat,
+    Endianness, Event, ExtraChannel, JxlBitDepth, JxlColorProfile, JxlColorType, JxlDataFormat,
     JxlDecoder as JxlRsDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat,
-    ProcessingResult,
 };
-use jxl::headers::extra_channels::ExtraChannel;
 
 use crate::backend::layout_of;
 use crate::convert::{ConvSample, native_format, reassemble};
-use crate::error::map_decode_error;
+use crate::error::{map_decode_error, out_of_order};
 
 /// Upper bound on decoded size, in **pixels × channels**, enforced by jxl-rs's
-/// [`JxlDecoderOptions::pixel_limit`]. `1 << 28` (≈268M) samples caps a hostile stream's memory use
+/// [`JxlDecoderOptions::sample_limit`]. `1 << 28` (≈268M) samples caps a hostile stream's memory use
 /// (a 16-bit RGBA image at this limit is ~512 MiB of output) while comfortably admitting every
 /// realistic still image. The limit is deliberately generous and additive to lower later.
-const PIXEL_LIMIT: usize = 1 << 28;
+const SAMPLE_LIMIT: usize = 1 << 28;
+
+/// Parses the image headers up to [`Event::BasicInfo`], returning the decoder and the unread input.
+fn read_headers(mut input: &[u8]) -> Result<(JxlRsDecoder, &[u8])> {
+    // `JxlDecoderOptions` is `#[non_exhaustive]`; build from `Default` and set what we use.
+    let mut options = JxlDecoderOptions::default();
+    options.sample_limit = Some(SAMPLE_LIMIT);
+    let mut decoder = JxlRsDecoder::new(options);
+    match decoder
+        .process(&mut input, None, None)
+        .map_err(map_decode_error)?
+    {
+        Event::BasicInfo => Ok((decoder, input)),
+        Event::NeedMoreInput { .. } => Err(truncated()),
+        _ => Err(out_of_order()),
+    }
+}
 
 /// Parses the stream's headers and returns its basic properties without decoding any pixels.
 pub(crate) fn info(data: &[u8]) -> Result<JxlInfo> {
-    let mut options = JxlDecoderOptions::default();
-    options.pixel_limit = Some(PIXEL_LIMIT);
-    let mut input: &[u8] = data;
-
-    let decoder = JxlRsDecoder::<Initialized>::new(options);
-    let decoder = match decoder.process(&mut input).map_err(map_decode_error)? {
-        ProcessingResult::Complete { result } => result,
-        ProcessingResult::NeedsMoreInput { .. } => return Err(truncated()),
-    };
-
-    let basic = decoder.basic_info();
+    let (decoder, _) = read_headers(data)?;
+    let basic = decoder.basic_info().ok_or_else(out_of_order)?;
+    let pixel_format = decoder.current_pixel_format().ok_or_else(out_of_order)?;
     let (Ok(width), Ok(height)) = (u32::try_from(basic.size.0), u32::try_from(basic.size.1)) else {
         return Err(Error::invalid_input(
             env!("CARGO_PKG_NAME"),
@@ -53,7 +57,7 @@ pub(crate) fn info(data: &[u8]) -> Result<JxlInfo> {
         dimensions: Dimensions::new(width, height)?,
         bits_per_sample: basic.bit_depth.bits_per_sample(),
         is_float: matches!(basic.bit_depth, JxlBitDepth::Float { .. }),
-        color_channels: if decoder.current_pixel_format().color_type.is_grayscale() {
+        color_channels: if pixel_format.color_type.is_grayscale() {
             1
         } else {
             3
@@ -66,19 +70,9 @@ pub(crate) fn info(data: &[u8]) -> Result<JxlInfo> {
 /// Returns the ICC profile embedded in the stream's metadata, or `None` for a structured
 /// (enumerated) colour encoding.
 pub(crate) fn embedded_icc_profile(data: &[u8]) -> Result<Option<Vec<u8>>> {
-    // `JxlDecoderOptions` is `#[non_exhaustive]`; build from `Default` and set what we use.
-    let mut options = JxlDecoderOptions::default();
-    options.pixel_limit = Some(PIXEL_LIMIT);
-    let mut input: &[u8] = data;
-
-    // Initialized -> WithImageInfo: parse the file headers, which include the colour profile.
-    let decoder = JxlRsDecoder::<Initialized>::new(options);
-    let decoder = match decoder.process(&mut input).map_err(map_decode_error)? {
-        ProcessingResult::Complete { result } => result,
-        ProcessingResult::NeedsMoreInput { .. } => return Err(truncated()),
-    };
-
-    match decoder.embedded_color_profile() {
+    // The image headers include the colour profile.
+    let (decoder, _) = read_headers(data)?;
+    match decoder.embedded_color_profile().ok_or_else(out_of_order)? {
         JxlColorProfile::Icc(bytes) => Ok(Some(bytes.clone())),
         JxlColorProfile::Simple(_) => Ok(None),
     }
@@ -154,14 +148,6 @@ pub enum JxlRender {
 pub struct JxlPartialReport {
     /// How much of the image the returned buffer carries.
     pub render: JxlRender,
-    /// Passes fully decoded for the frame, as jxl-rs counts them after the flush.
-    ///
-    /// This is the **minimum over all groups**, so it is a progressive-refinement counter rather
-    /// than a coverage metric: a single-pass stream (what this crate's encoder produces) reports
-    /// `0` for every truncation, and a non-zero count does not mean every pixel is final. It is
-    /// also `0` on a [`JxlRender::Complete`] decode, where jxl-rs no longer exposes the count.
-    /// Never infer completeness from it — use [`is_complete`](JxlPartialReport::is_complete).
-    pub completed_passes: u32,
     /// jxl-rs's estimate of how many further bytes it wanted, or `None` on a complete decode.
     ///
     /// An estimate for sizing the next read — not a byte offset into the input, and not a promise
@@ -180,7 +166,6 @@ impl JxlPartialReport {
     fn complete() -> Self {
         Self {
             render: JxlRender::Complete,
-            completed_passes: 0,
             additional_bytes_hint: None,
         }
     }
@@ -203,14 +188,6 @@ struct RawOptions {
     codestream_bit_depth: bool,
     /// What to do with a stream that ends early.
     truncation: Truncation,
-}
-
-/// Narrows a jxl-rs `usize` count to `u32`, saturating rather than wrapping.
-///
-/// Only ever applied to diagnostic counters, where a saturated value is a better answer than a
-/// wrapped one and neither is worth failing a decode over.
-fn saturating_u32(n: usize) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// Widens (or saturates) a jxl-rs `usize` byte hint to `u64`.
@@ -294,25 +271,11 @@ fn decode_raw<S: ConvSample>(
     data_format: JxlDataFormat,
     options: RawOptions,
 ) -> Result<(RawFrame, JxlPartialReport)> {
-    // `JxlDecoderOptions` is `#[non_exhaustive]`, so it is built from its `Default` and then the
-    // one public field we care about is set. The rest of the default stands deliberately: in
-    // particular `progressive_mode` stays `Pass`, so a complete stream decodes identically whether
-    // it arrived through the rejecting or the best-effort policy.
-    let mut jxl_options = JxlDecoderOptions::default();
-    jxl_options.pixel_limit = Some(PIXEL_LIMIT);
-
-    let mut input: &[u8] = data;
-
-    // Initialized -> WithImageInfo: parse the file/frame headers.
-    let decoder = JxlRsDecoder::<Initialized>::new(jxl_options);
-    let mut decoder = match decoder.process(&mut input).map_err(map_decode_error)? {
-        ProcessingResult::Complete { result } => result,
-        ProcessingResult::NeedsMoreInput { .. } => return Err(truncated()),
-    };
+    let (mut decoder, mut input) = read_headers(data)?;
 
     // Read everything we need from the image info, then drop the borrows before reconfiguring.
     let (size, num_extra, stream_is_gray, stream_has_alpha, premultiplied, stream_int_bits) = {
-        let basic = decoder.basic_info();
+        let basic = decoder.basic_info().ok_or_else(out_of_order)?;
         if basic.animation.is_some() {
             return Err(Error::unsupported(
                 env!("CARGO_PKG_NAME"),
@@ -326,7 +289,11 @@ fn decode_raw<S: ConvSample>(
         let premultiplied = alpha.is_some_and(|c| c.alpha_associated);
         // The default pixel format's colour type reflects the stream's colour space (grayscale vs
         // RGB) and never carries alpha, so it is the cleanest signal of "is this a colour image?".
-        let stream_is_gray = decoder.current_pixel_format().color_type.is_grayscale();
+        let stream_is_gray = decoder
+            .current_pixel_format()
+            .ok_or_else(out_of_order)?
+            .color_type
+            .is_grayscale();
         // The declared integer precision (None for float streams, which keep full-range output).
         let stream_int_bits = match basic.bit_depth {
             JxlBitDepth::Int { bits_per_sample } => Some(bits_per_sample),
@@ -388,13 +355,15 @@ fn decode_raw<S: ConvSample>(
         (false, false) => JxlColorType::Rgb,
         (false, true) => JxlColorType::Rgba,
     };
-    decoder.set_pixel_format(JxlPixelFormat {
-        color_type,
-        color_data_format: Some(data_format),
-        // Every extra channel is ignored (`None`): alpha, when wanted, arrives interleaved via the
-        // colour type above. The vector length must still match the stream's extra-channel count.
-        extra_channel_format: vec![None; num_extra],
-    });
+    decoder
+        .set_pixel_format(JxlPixelFormat {
+            color_type,
+            color_data_format: Some(data_format),
+            // Every extra channel is ignored (`None`): alpha, when wanted, arrives interleaved via
+            // the colour type above. The vector length must still match the extra-channel count.
+            extra_channel_format: vec![None; num_extra],
+        })
+        .map_err(map_decode_error)?;
 
     // Size the single interleaved output buffer, guarding the byte arithmetic against overflow.
     let src_channels = src_color + usize::from(src_alpha);
@@ -409,68 +378,46 @@ fn decode_raw<S: ConvSample>(
     })?;
     let (mut backing, offset) = aligned_backing(total, needs_row_alignment(S::BYTES));
 
-    // WithImageInfo -> WithFrameInfo: parse the frame header.
-    let decoder = match decoder.process(&mut input).map_err(map_decode_error)? {
-        ProcessingResult::Complete { result } => result,
-        ProcessingResult::NeedsMoreInput { size_hint, .. } => {
-            if options.truncation == Truncation::Reject {
-                return Err(truncated());
-            }
-            // No frame header yet, so there is nothing to draw: flushing here would re-enter
-            // jxl-rs's header parser on empty input, hit its out-of-input error, and write
-            // nothing. The buffer `aligned_backing` zeroed is the honest answer, and skipping
-            // the call keeps the flush machinery out of a stage that cannot benefit from it.
-            return Ok((
-                RawFrame {
-                    dims,
-                    bytes: backing,
-                    offset,
-                    len: total,
-                    src_color,
-                    src_alpha,
-                },
-                JxlPartialReport {
-                    render: JxlRender::HeaderOnly,
-                    completed_passes: 0,
-                    additional_bytes_hint: Some(saturating_u64(size_hint)),
-                },
-            ));
-        }
-    };
-
-    // WithFrameInfo -> WithImageInfo: render pixels into our buffer.
+    // Decode until the frame completes, rendering into our buffer.
     let report = {
-        let buf = JxlOutputBuffer::new(
+        let mut buffers = [JxlOutputBuffer::new(
             &mut backing[offset..offset + total],
             height as usize,
             bytes_per_row,
-        );
-        let mut buffers = [buf];
-        match decoder
-            .process(&mut input, &mut buffers)
-            .map_err(map_decode_error)?
-        {
-            ProcessingResult::Complete { .. } => JxlPartialReport::complete(),
-            ProcessingResult::NeedsMoreInput {
-                size_hint,
-                mut fallback,
-            } => {
-                if options.truncation == Truncation::Reject {
+        )];
+        let mut frame_started = false;
+        loop {
+            match decoder
+                .process(&mut input, Some(&mut buffers), None)
+                .map_err(map_decode_error)?
+            {
+                Event::FrameHeader => frame_started = true,
+                Event::FrameComplete { .. } | Event::Complete => {
+                    break JxlPartialReport::complete();
+                }
+                Event::NeedMoreInput { .. } if options.truncation == Truncation::Reject => {
                     return Err(truncated());
                 }
-                // Draw every group the stream did deliver. A failure here means jxl-rs refused
-                // the render outright, which is a corrupt stream rather than a short one —
-                // propagate it instead of laundering it into a valid-looking blank image.
-                fallback
-                    .flush_pixels(&mut buffers)
-                    .map_err(map_decode_error)?;
-                JxlPartialReport {
-                    render: JxlRender::BestEffort,
-                    // Read after the flush: it re-runs the section parser, which can complete a
-                    // pass from data already buffered.
-                    completed_passes: saturating_u32(fallback.num_completed_passes()),
-                    additional_bytes_hint: Some(saturating_u64(size_hint)),
+                Event::NeedMoreInput { size_hint } => {
+                    // Without a frame header there is nothing to draw: the zeroed buffer is the
+                    // honest answer, and the flush machinery cannot benefit.
+                    let render = if frame_started {
+                        // Draw every group the stream did deliver. A failure here means jxl-rs
+                        // refused the render outright, which is a corrupt stream rather than a
+                        // short one — propagate it instead of laundering it into a blank image.
+                        decoder
+                            .flush_pixels(&mut buffers, None)
+                            .map_err(map_decode_error)?;
+                        JxlRender::BestEffort
+                    } else {
+                        JxlRender::HeaderOnly
+                    };
+                    break JxlPartialReport {
+                        render,
+                        additional_bytes_hint: Some(saturating_u64(size_hint)),
+                    };
                 }
+                Event::BasicInfo => return Err(out_of_order()),
             }
         }
     };
@@ -692,13 +639,11 @@ mod tests {
         let complete = JxlPartialReport::complete();
         assert!(complete.is_complete());
         assert_eq!(complete.render, JxlRender::Complete);
-        assert_eq!(complete.completed_passes, 0);
         assert_eq!(complete.additional_bytes_hint, None);
 
         for render in [JxlRender::HeaderOnly, JxlRender::BestEffort] {
             let partial = JxlPartialReport {
                 render,
-                completed_passes: 0,
                 additional_bytes_hint: Some(1),
             };
             assert!(!partial.is_complete(), "{render:?} is not complete");
@@ -706,12 +651,8 @@ mod tests {
     }
 
     #[test]
-    fn the_diagnostic_narrowings_saturate_rather_than_wrap() {
-        assert_eq!(saturating_u32(7), 7);
+    fn the_byte_hint_saturates_rather_than_wraps() {
         assert_eq!(saturating_u64(7), 7);
-        // A count wider than the field saturates; on a 32-bit host `usize::MAX` is exactly
-        // `u32::MAX`, which is the saturation point either way.
-        assert_eq!(saturating_u32(usize::MAX), u32::MAX);
         assert_eq!(saturating_u64(usize::MAX), usize::MAX as u64);
     }
 
